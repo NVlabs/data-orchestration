@@ -1,0 +1,9 @@
+*.swp
+*.bin
+*.txt
+*.o
+*.a
+*.out
+.sconsign.dblite
+cpplint.out
+.nfs*

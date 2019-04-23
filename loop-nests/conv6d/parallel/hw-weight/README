@@ -1,0 +1,12 @@
+Updated on 7/18/2018
+
+This is a weight-stationary parallel dense 6D convolution example.
+
+This example implements 2D-tiling of input image over w (width) and h(height) dimensions.
+Users can specify the size of tiles via command line argument "tile_size_h" and "tile_size_w." For easy use, the script "run.sh" also supports command line argumments.
+The usage of the run.sh script is as follows: ./run.sh (Input/Weight_file_preset) (Trace level) (tile size in H dimension) (tile size in W dimension)
+  * Currently available input/Weight file presets: A,B,C, or D
+  * Trace level: 0,1,2,3 or 4
+  * If you do not specify tile sizes, the default tile size is 4 x 4 (h x w).
+
+Please note that edge conditions (when W/H tile size does not divide W/H dimension sizes) are handled in this example; you can put any size of tiles.
