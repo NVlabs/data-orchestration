@@ -1,0 +1,14 @@
+Import('env')
+
+
+#dst_stn_tiled = Split(""" cc-tiled-dst-stn.cpp """)
+#dst_stn_pgen  = Split(""" cc-tiled-dst-stn-pgen.cpp """)
+csf_tiling    = Split(""" cc-tiling-with-csf.cpp """)
+
+#env = Environment(variables=vars,
+#	          CPPDEFINES={'NUM_DOT_C' : '${NUM_DOT_C}'})
+#env.Program(target = 'cc-tiled-with-csf.32.bin', source = csf_tiling)
+
+#env.Program(target = 'cc-tiled-dst-stn.bin', source = dst_stn_tiled)
+#env.Program(target = 'cc-tiled-dst-stn-pgen.bin', source = dst_stn_pgen)
+env.Program(target = 'cc-tiled-with-csf.bin', source = csf_tiling)
