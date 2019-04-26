@@ -893,6 +893,16 @@ class Vec : public Tensor
   {
   }
   
+  Vec(const int& size, const int& init_val, const std::string& nm = "") :
+    Tensor({size}, init_val, nm)
+  {
+  }
+
+  Vec(const int& size, int (*init_func)(const std::vector<int>& idxs), const std::string& nm = "") :
+    Tensor({size}, init_func, nm)
+  {
+  }
+
   int Size()
   {
     return FlattenSizes(dim_sizes_);
