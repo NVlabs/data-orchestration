@@ -30,7 +30,7 @@
 //An output-stationary inner product 
 int main(int argc, char** argv)
 {
-
+/*
   using namespace whoop;
 
   CompressedTensorIn  input_a("input_a");
@@ -66,17 +66,18 @@ int main(int argc, char** argv)
   auto scanner_a = input_a.GetScanner();
   
   // A-stationary, row-major.
-  for (auto [point_a, val_a] : scanner_a)
+  for (auto& point_a : scanner_a)
   {
     for (int n = 0; n < N; n++)
     {
-        int m = point_a[1];
-        int k = point_a[0];
+        int m = point_a[dims::M];
+        int k = point_a[dims::K];
         std::cout << "Z[" << m << ", " << n << "] += A[" << m << ", " << k << "] * B[" << k << ", " << n << "]" << std::endl;
-        std::cout << outputs.At({m, n}) << " += " << val_a << " * " << input_b.At({k, n}) << std::endl;
-        outputs.At({m, n}) += val_a * input_b.At({k, n});
+        std::cout << outputs.At({m, n}) << " += " << input_a.At(point_a) << " * " << input_b.At({k, n}) << std::endl;
+        outputs.At({m, n}) += input_a.At(point_a) * input_b.At({k, n});
     }
   }
   
   whoop::Done();
+  */
 }

@@ -330,12 +330,12 @@ int main(int argc, char** argv)
   {
       t_for (s1, 0, S1);
       {
-          vData.AddTileLevel(std::max(S_TILE_SIZE, S_TILE_SIZE, BURST_SIZE), BURST_SIZE);  //load once reuse across tiles in a row
+          vData.AddTileLevel(std::max(S_TILE_SIZE, BURST_SIZE), BURST_SIZE);  //load once reuse across tiles in a row
           t_for (d1, 0, D1);
           {
               w_if (TileEmpty[s1][d1] == 0);
               {
-                  InDegrees.AddTileLevel(std::max(D_TILE_SIZE, D_TILE_SIZE, BURST_SIZE), BURST_SIZE);  
+                  InDegrees.AddTileLevel(std::max(D_TILE_SIZE, BURST_SIZE), BURST_SIZE);  
 
                   /* 
                    * There is reuse in the TileInOffsets[][][d]. Since the 
