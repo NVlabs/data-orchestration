@@ -35,7 +35,7 @@ env.Append(LIBPATH = ['#lib/whoop'])
 env.Append(CPPPATH = ['#lib/whoop/include'])
 env.Append(LIBPATH = ['#lib/timewhoop'])
 env.Append(CPPPATH = ['#lib/timewhoop/include'])
-env.Append(CPPPATH = ['loop-nests/conv6d/lib'])
+env.Append(CPPPATH = ['loop-nests/conv6d/include'])
 
 if int(debug):
   env.Append(CCFLAGS = ['-g'])

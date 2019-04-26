@@ -26,10 +26,10 @@
 
 Import('env')
 
-subdirs = ['connected-components', 'triangle-counting', 'bfs',
+subdirs = ['triangle-counting', 'bfs',
            'bfs-pull', 'pagerank', 'spmv', 'bfs-push-pull']
 
-disabled = []
+disabled = ['connected-components']
 
 for subdir in subdirs:
     env.SConscript('%s/SConscript' % subdir, {'env': env})

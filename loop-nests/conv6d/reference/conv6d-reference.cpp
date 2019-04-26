@@ -44,15 +44,15 @@ int main(int argc, char** argv)
 
   whoop::Init(argc, argv);
   
-  const int kInputWidth = inputs.Size(dims::inputs::W);
-  const int kInputHeight = inputs.Size(dims::inputs::H);
-  const int kInputChannel = inputs.Size(dims::inputs::C);
-  const int kWeightHeight = weights.Size(dims::weights::S);
-  const int kWeightWidth = weights.Size(dims::weights::R);
-  const int kWeightChannel = weights.Size(dims::weights::C);
+  const int kInputWidth = inputs.Size(static_cast<int>(dims::Inputs::W));
+  const int kInputHeight = inputs.Size(static_cast<int>(dims::Inputs::H));
+  const int kInputChannel = inputs.Size(static_cast<int>(dims::Inputs::C));
+  const int kWeightHeight = weights.Size(static_cast<int>(dims::Weights::S));
+  const int kWeightWidth = weights.Size(static_cast<int>(dims::Weights::R));
+  const int kWeightChannel = weights.Size(static_cast<int>(dims::Weights::C));
   const int kOutputWidth = kInputWidth - kWeightWidth + 1;
   const int kOutputHeight = kInputHeight - kWeightHeight + 1;
-  const int kOutputChannel = weights.Size(dims::weights::K);
+  const int kOutputChannel = weights.Size(static_cast<int>(dims::Weights::K));
 
   assert(kWeightChannel == kInputChannel);
   
