@@ -36,6 +36,16 @@
 namespace whoop
 {
 
+namespace buff
+{
+int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int max_spatial_partitions )
+{
+  return ( curr_spatial_idx / (max_spatial_partitions/buffs_at_level) );
+}
+    
+} // end namespace buff
+    
+
 namespace ast
 {
 

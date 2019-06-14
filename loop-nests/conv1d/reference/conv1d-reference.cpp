@@ -52,17 +52,17 @@ int main(int argc, char** argv)
 
   // Short-form variable names
   const int W = kInputWidth;
-  const int R = kWeightWidth;
-  const int P = kOutputWidth;
+  const int S = kWeightWidth;
+  const int Q = kOutputWidth;
     
   whoop::T(0) << "RUNNING..." << whoop::EndT;
 
   // Output stationary is the easiest to express for the reference version.
-  for (int p = 0; p <  P; p++)
+  for (int q = 0; q <  Q; q++)
   {
-    for (int r = 0; r < R; r++)
+    for (int s = 0; s < S; s++)
     {
-      outputs.At(p) += inputs.At(p + r) * weights.At(r);
+      outputs.At(q) += inputs.At(q + s) * weights.At(s);
     }
   }
 
@@ -72,7 +72,7 @@ int main(int argc, char** argv)
   {
     whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
   }
-  for (int x = 0; x < P; x++)
+  for (int x = 0; x < Q; x++)
   {
     whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
   }

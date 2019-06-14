@@ -43,10 +43,12 @@ bool kShouldCheckReferenceOutput(true);
 bool kShouldTraceExecution(false);
 bool kShouldTraceBuffers(true);
 bool kShouldLogActivity(false);
+bool kShouldFlushTiles(false);
 int kCurrentTraceLevel(0);
 int kUserTraceLevel(0);
 std::string kProgramName;
-
+std::string kStatsFileName; 
+    
 po::options_description desc_{"Options for whoop"};
 
 // ******** Dynamic Options Over-ride parsing information ********
@@ -59,6 +61,9 @@ void SetOverrides()
     ("trace_exec,e",
       po::value<bool>(&kShouldTraceExecution)->implicit_value(false),
       "Trace the execution of the abstract syntax tree.")
+    ("flush_tiles,f",
+      po::value<bool>(&kShouldFlushTiles)->implicit_value(false),
+      "User Specified Manual Buffet Flushes.")
     ("trace_buffers,b",
       po::value<bool>(&kShouldTraceBuffers)->implicit_value(true),
       "Trace the execution of the tile buffer accesses.")
@@ -125,6 +130,9 @@ void AddOption(std::string* var, const std::string& name, const std::string& des
 void ParseOptions(int argc, char** argv)
 {
 
+  // by default, what is the prefix for the whoop output file called?
+  AddOption( &options::kStatsFileName, "stats", "Stats File Name");
+
   assert(!parsed_users_options);
 
   user_desc.add_options()
@@ -143,6 +151,12 @@ void ParseOptions(int argc, char** argv)
   }
 
   options::kProgramName = std::string(argv[0]);
+
+  // if no prefix provided, use the program name as the prefix
+  if( options::kStatsFileName == "" )
+  {
+      options::kStatsFileName = options::kProgramName;
+  }
 
   parsed_users_options = true;
 }

@@ -28,6 +28,10 @@ import os
 
 env = Environment(ENV = os.environ)
 
+#vars = Variables()
+#vars.Add('DOT_C', 'How Many DOT-Cs', 0)
+#env.Append( CPPDEFINES=[('NUM_DOT_C' ,'${DOT_C}')] )
+
 debug = ARGUMENTS.get('debug',0)
 
 env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++14'])

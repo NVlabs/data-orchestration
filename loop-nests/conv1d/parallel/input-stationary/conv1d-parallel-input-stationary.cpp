@@ -67,8 +67,8 @@ int main(int argc, char** argv)
 
   // Short-form variable names
   const int W = kInputWidth;
-  const int W1 = kNumPEs;
-  const int W0 = kPartitionSize;
+  const int W1 = kPartitionSize;
+  const int W0 = kNumPEs;
   const int R = kWeightWidth;
   const int P = kOutputWidth;
 
@@ -77,9 +77,9 @@ int main(int argc, char** argv)
   Var r("r");
   Var p("p");
 
-  s_for(w1, 0, W1);
+  t_for(w1, 0, W1);
   {
-    t_for(w0, 0, W0);
+    s_for(w0, 0, W0);
     {
       inputs.AddTileLevel(1);
       weights.AddTileLevel(R);

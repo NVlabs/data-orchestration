@@ -82,10 +82,9 @@ int main(int argc, char** argv)
   Var p1("p1");
   Var p0("p0");
 
-  s_for(p1, 0, P1);
+  t_for(p1, 0, P1);
   {
     inputs.AddTileLevel(P0 + R0, 1);
-    weights.AddTileLevel(1);
     outputs.AddTileLevel(P0);
     t_for(r1, 0, R1);
     {
@@ -95,7 +94,7 @@ int main(int argc, char** argv)
         weights.AddTileLevel(R0);
         outputs.AddTileLevel(1);
 
-        t_for(r0, 0, R0);
+        s_for(r0, 0, R0);
         {
           outputs[p1 * kOutputWidthL0 + p0] += 
            inputs[p1 * kOutputWidthL0 + p0 + r1 * kWeightWidthL0 + r0] * 
@@ -112,15 +111,6 @@ int main(int argc, char** argv)
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
-
-  for (int x = 0; x < W; x++)
-  {
-    whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
-  }
-  for (int x = 0; x < P; x++)
-  {
-    whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
-  }
 
   whoop::Done();
 

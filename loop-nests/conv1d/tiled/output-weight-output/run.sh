@@ -53,6 +53,6 @@ ${executable} \
   --ref_outputs_file=../../data-sets/outputs_${infile}_${wtfile}.ref.txt \
   --vec_outputs_file=outputs_${infile}_${wtfile}.out.txt \
   --weight_width_0=3 \
-  --output_width_1=31 \
+  --output_width_0=3 \
   --trace_level=${tlevel}
 

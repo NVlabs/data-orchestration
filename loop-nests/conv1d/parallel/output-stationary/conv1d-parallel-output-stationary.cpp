@@ -51,41 +51,39 @@ int main(int argc, char** argv)
   const int kOutputWidth = kInputWidth - kWeightWidth + 1;
   outputs.Resize(kOutputWidth);
 
-  const int kPartitionSize = kOutputWidth / kNumPEs;
-
   whoop::T(0) << "Input Width: " << kInputWidth << whoop::EndT;
   whoop::T(0) << "Weight Width: " << kWeightWidth << whoop::EndT;
   whoop::T(0) << "Output Width: " << kOutputWidth << whoop::EndT;
   whoop::T(0) << whoop::EndT;
   whoop::T(0) << "NumPEs: " << kNumPEs << whoop::EndT;
-  whoop::T(0) << "Partition size: " << kPartitionSize << whoop::EndT;
+  whoop::T(0) << "Partition size: " << kOutputWidth / kNumPEs << whoop::EndT;
   whoop::T(0) << whoop::EndT;
   
-  assert(kOutputWidth % kNumPEs == 0);
+  whoop::ASSERT(kOutputWidth % kNumPEs == 0) << "Number of PEs: " << kNumPEs << " does not divide output width: " << kOutputWidth << whoop::EndT;
 
   // Short-form variable names
-  const int E = kNumPEs;
   const int W = kInputWidth;
-  const int R = kWeightWidth;
-  const int P = kOutputWidth;
-  const int P1 = kNumPEs;
-  const int P0 = kPartitionSize;
+  const int S = kWeightWidth;
+  const int Q = kOutputWidth;
+  const int Q1 = kOutputWidth / kNumPEs;
+  const int Q0 = kNumPEs;
 
-  Var r("r");
-  Var p0("p0");
-  Var p1("p1");
+  Var s("s");
+  Var q("q");
+  Var q0("q0");
+  Var q1("q1");
 
-  s_for(p1, 0, P1);
+  t_for(q1, 0, Q1);
   {
-    t_for(p0, 0, P0);
+    inputs.AddTileLevel(S, 1);
+    weights.AddTileLevel(S);
+    s_for(q0, 0, Q0);
     {
-      inputs.AddTileLevel(kWeightWidth, 1);
-      weights.AddTileLevel(kWeightWidth);
       outputs.AddTileLevel(1);
-
-      t_for(r, 0, R);
+      t_for(s, 0, S);
       {
-        outputs[p0 + p1 * P0] += inputs[p0 + r + p1 * P0] * weights[r];
+        q = q0 + q1 * Q0;
+        outputs[q] += inputs[q + s] * weights[s];
       }
       end();
     }
@@ -96,15 +94,6 @@ int main(int argc, char** argv)
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
-
-  for (int x = 0; x < W; x++)
-  {
-    whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
-  }
-  for (int x = 0; x < P; x++)
-  {
-    whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
-  }
 
   whoop::Done();
   

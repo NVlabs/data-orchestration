@@ -1,6 +1,7 @@
 #ifndef CSF_DEF
 #define CSF_DEF
 
+#include <map>
 #include "whoop.hpp"
 #include <algorithm>
 #include <string>
@@ -17,8 +18,11 @@ using namespace std;
 #define BYTES_PER_VERTEX   8
 
 #ifndef NUM_DOT_C
-#define NUM_DOT_C 32
+// #define NUM_DOT_C 32
+#define NUM_DOT_C 1
 #endif
+
+extern int ARG_BUFFET_GRANULARITY;
 
 class CSF
 {
@@ -384,8 +388,7 @@ class CSF
 //         whoop::Run();
 //         cout<< "DONE WHOOP..." <<endl;
 // 
-//         extern string ARG_StatsFileName;
-//         whoop::Done(ARG_StatsFileName);
+//         whoop::Done();
 //     }
 // 
 //     void Whoop_RunGraphAlgorithm( int V, int E, const vector<int> DimMax )
@@ -1064,7 +1067,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -1095,9 +1098,9 @@ class GraphAlgorithm
 
         t_for(s2, 0, S2);
         {
-            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
 
             s_for(s1,0,NUM_DOT_C);
             {
@@ -1139,8 +1142,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void WhoopUntiled_CSC( int BufferL1_KB, int BufferL2_KB )
@@ -1148,7 +1150,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -1177,11 +1179,11 @@ class GraphAlgorithm
 
         t_for(d,0,V);
         {
-            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
             
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
-            dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
+            dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE );
 
             t_for(p,(*SegmentArray)[d],(*SegmentArray)[d+1]);
             {
@@ -1204,8 +1206,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void OnlineTiling_CSC_ver2( int D1, int S2, int S1, int D0, int S0 )
@@ -1344,7 +1345,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -1378,18 +1379,18 @@ class GraphAlgorithm
                 /**********************************************************************************/
                 /******************************* Setup LLC Buffet Sizes ***************************/
                 /**********************************************************************************/
-                SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-                DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+                SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+                DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-                CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+                CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-                srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+                srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
                 dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
                 /**********************************************************************************/
                 s_for(s1,0,NUM_DOT_C); //t_for(s1,0,S1);
                 {
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
                     DeltaArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     SegmentArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -1452,8 +1453,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void WhoopOnlineTiling_CSC_ver3( int D1, int S2, int S1, int D0, int S0, int BufferL1_KB, int BufferL2_KB )
@@ -1464,7 +1464,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -1496,12 +1496,12 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            ValueArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            ValueArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
             /**********************************************************************************/
 
@@ -1509,12 +1509,12 @@ class GraphAlgorithm
             {
                 s_for(s1,0,S1); //t_for(s1,0,S1);
                 {
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
-                    DeltaArray->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
-                    SegmentArray->AddTileLevel( DST_DATA_BUFFET+1, 1, BUFFET_LINE_SIZE );
-                    CoordinateArray->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
-                    ValueArray->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+                    DeltaArray->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE );
+                    SegmentArray->AddTileLevel( DST_DATA_BUFFET+1, DST_DATA_BUFFET+1, BUFFET_LINE_SIZE );
+                    CoordinateArray->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE );
+                    ValueArray->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE );
 
                     t_for(d0,0,D0);
                     {
@@ -1602,8 +1602,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void WhoopOnlineTiling_CSR_ver3( int D1, int S2, int S1, int D0, int S0, int BufferL1_KB, int BufferL2_KB )
@@ -1614,7 +1613,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -1650,23 +1649,23 @@ class GraphAlgorithm
                 /**********************************************************************************/
                 /******************************* Setup LLC Buffet Sizes ***************************/
                 /**********************************************************************************/
-                DeltaArray->AddTileLevel( (DST_DATA_BUFFET*NUM_DOT_C), 1, BUFFET_LINE_SIZE );
-                SegmentArray->AddTileLevel( ((DST_DATA_BUFFET*NUM_DOT_C)+1), 1, BUFFET_LINE_SIZE );
+                DeltaArray->AddTileLevel( (DST_DATA_BUFFET*NUM_DOT_C), (DST_DATA_BUFFET*NUM_DOT_C), BUFFET_LINE_SIZE );
+                SegmentArray->AddTileLevel( ((DST_DATA_BUFFET*NUM_DOT_C)+1), ((DST_DATA_BUFFET*NUM_DOT_C)+1), BUFFET_LINE_SIZE );
 
                 // this should be implemented as a cache because a given
                 // older 's0' coordinate may be reused much later than a new
                 // 's0' coordinate, so we don't want to discard
-                CoordinateArray->AddTileLevel( (DST_DATA_BUFFET*NUM_DOT_C), 1, BUFFET_LINE_SIZE );
+                CoordinateArray->AddTileLevel( (DST_DATA_BUFFET*NUM_DOT_C), (DST_DATA_BUFFET*NUM_DOT_C), BUFFET_LINE_SIZE );
 
                             
-                srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+                srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
                 dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                 
                 /**********************************************************************************/
 
                 s_for(s1,0,NUM_DOT_C); //t_for(s1,0,S1);
                 {
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
 
                     SegmentArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -1756,8 +1755,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
 
@@ -1774,7 +1772,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int RF_SIZE            = (4*KILO     / BYTES_PER_VERTEX);
         int L1_SIZE            = (64*KILO    / BYTES_PER_VERTEX);
@@ -1893,7 +1891,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int RF_SIZE            = (4*KILO     / BYTES_PER_VERTEX);
         int L1_SIZE            = (64*KILO    / BYTES_PER_VERTEX);
@@ -1948,7 +1946,7 @@ class GraphAlgorithm
                     ValueArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
-                    dstData->AddTileLevel( LLB_SIZE, 1, BUFFET_LINE_SIZE );
+                    dstData->AddTileLevel( LLB_SIZE, LLB_SIZE, BUFFET_LINE_SIZE );
                     /**********************************************************************************/
 
                     s_for(s2,0,COPLAND_NUM_DOT_C);
@@ -1956,7 +1954,7 @@ class GraphAlgorithm
                         /**********************************************************************************/
                         /******************************* Setup DOT-C Buffet Sizes ***************************/
                         /**********************************************************************************/
-                        srcData->AddTileLevel( L1_SIZE, 1, BUFFET_LINE_SIZE );
+                        srcData->AddTileLevel( L1_SIZE, L1_SIZE, BUFFET_LINE_SIZE );
                         /**********************************************************************************/
 
                         s_for(s1,0,COPLAND_NUM_CT); 
@@ -1964,7 +1962,7 @@ class GraphAlgorithm
                             /**********************************************************************************/
                             /******************************* Setup RF Buffet Sizes ****************************/
                             /**********************************************************************************/
-                            dstData->AddTileLevel( RF_SIZE, 1, 1 );
+                            dstData->AddTileLevel( RF_SIZE, RF_SIZE, 1 );
                             /**********************************************************************************/
 
                             t_for(s0,0,S0); 
@@ -1992,8 +1990,8 @@ class GraphAlgorithm
                                         /**********************************************************************************/
                                         /******************************* Setup Vector Width Sizes ************************/
                                         /**********************************************************************************/
-                                        srcData->AddTileLevel( COPLAND_VECTOR_WIDTH, 1, COPLAND_VECTOR_WIDTH );
-                                        ValueArray->AddTileLevel( COPLAND_VECTOR_WIDTH, 1, COPLAND_VECTOR_WIDTH );
+                                        srcData->AddTileLevel( COPLAND_VECTOR_WIDTH, COPLAND_VECTOR_WIDTH, COPLAND_VECTOR_WIDTH );
+                                        ValueArray->AddTileLevel( COPLAND_VECTOR_WIDTH, COPLAND_VECTOR_WIDTH, COPLAND_VECTOR_WIDTH );
                                         dstData->AddTileLevel( 1, 1, 1 );
                                         /**********************************************************************************/
 
@@ -2050,8 +2048,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void OnlineTiling_CSC( int D1, int S2, int S1, int D0, int S0 )
@@ -2231,7 +2228,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -2263,12 +2260,12 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
             /**********************************************************************************/
@@ -2277,7 +2274,7 @@ class GraphAlgorithm
             {
                 s_for(s1,0,NUM_DOT_C); //t_for(s1,0,S1);
                 {
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
                     DeltaArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     SegmentArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -2342,8 +2339,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void WhoopOnlineTiling_CSR( int D1, int S2, int S1, int D0, int S0, int BufferL1_KB, int BufferL2_KB )
@@ -2353,7 +2349,7 @@ class GraphAlgorithm
 
         CalculateDegrees();
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -2384,12 +2380,12 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            DeltaArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
             /**********************************************************************************/
@@ -2398,7 +2394,7 @@ class GraphAlgorithm
             {
                 s_for(s1,0,NUM_DOT_C); //t_for(s1,0,S1);
                 {
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     DeltaArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     SegmentArray->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -2460,8 +2456,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void RunWhoop5_CSC( int BufferL1_KB, int BufferL2_KB )
@@ -2473,7 +2468,7 @@ class GraphAlgorithm
         int D0 = adjMat_csf->dim_sizes[1];
         int S0 = adjMat_csf->dim_sizes[0];
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -2517,19 +2512,19 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
             /**********************************************************************************/
@@ -2549,7 +2544,7 @@ class GraphAlgorithm
                 t_for(s1_pos, start_s1_pos, end_s1_pos);
                 {
                     // Dest data buffet size
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
                     
                     s1 = (*adjMat_csf->coordArray[2])[s1_pos];
@@ -2596,8 +2591,7 @@ class GraphAlgorithm
         cout<<endl;
 
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void RunWhoop5_CSR( int BufferL1_KB, int BufferL2_KB )
@@ -2609,7 +2603,7 @@ class GraphAlgorithm
         int D0 = adjMat_csf->dim_sizes[1];
         int S0 = adjMat_csf->dim_sizes[0];
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -2653,19 +2647,19 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
             /**********************************************************************************/
@@ -2685,7 +2679,7 @@ class GraphAlgorithm
                 t_for(s1_pos, start_s1_pos, end_s1_pos);
                 {
                     // Dest data buffet size
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
                     
                     s1 = (*adjMat_csf->coordArray[2])[s1_pos];
@@ -2733,8 +2727,7 @@ class GraphAlgorithm
         cout<<endl;
 
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
 
@@ -2774,7 +2767,7 @@ class GraphAlgorithm
         int D0 = adjMat_csf->dim_sizes[1];
         int S0 = adjMat_csf->dim_sizes[0];
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -2818,21 +2811,21 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->valArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->valArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
             /**********************************************************************************/
@@ -2852,7 +2845,7 @@ class GraphAlgorithm
                 s_for(ct, 0, NUM_DOT_C);
                 {
                     // Dest data buffet size
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
 
                     adjMat_csf->segArray[1]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -2882,10 +2875,10 @@ class GraphAlgorithm
                             t_for(s0_pos, start_s0_pos, end_s0_pos );
                             {
                                 s0         = (*adjMat_csf->coordArray[0])[s0_pos]; 
-//                                 tensor_val = (*adjMat_csf->valArray)[s0_pos]; 
+                                tensor_val = (*adjMat_csf->valArray)[s0_pos]; 
 
-//                                 (*dstData)[s2][s1][s0] += tensor_val*(*srcData)[d1][d0];
-                                (*dstData)[s2][s1][s0] += (*srcData)[d1][d0];
+                                (*dstData)[s2][s1][s0] += tensor_val*(*srcData)[d1][d0];
+//                                 (*dstData)[s2][s1][s0] += (*srcData)[d1][d0];
                             }
                             end();
                         }
@@ -2915,8 +2908,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void RunWhoop5_Parallel_CSR( int BufferL1_KB, int BufferL2_KB )
@@ -2928,7 +2920,7 @@ class GraphAlgorithm
         int S0 = adjMat_csf->dim_sizes[1];
         int D0 = adjMat_csf->dim_sizes[0];
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -2972,21 +2964,21 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->valArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->valArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
             dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
             /**********************************************************************************/
@@ -3006,7 +2998,7 @@ class GraphAlgorithm
                 s_for(ct, 0, NUM_DOT_C);
                 {
                     // Dest data buffet size
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
 
                     adjMat_csf->segArray[1]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -3036,10 +3028,10 @@ class GraphAlgorithm
                             t_for(d0_pos, start_d0_pos, end_d0_pos );
                             {
                                 d0         = (*adjMat_csf->coordArray[0])[d0_pos]; 
-//                                 tensor_val = (*adjMat_csf->valArray)[d0_pos]; 
+                                tensor_val = (*adjMat_csf->valArray)[d0_pos]; 
 
-//                                 (*dstData)[s2][s1][s0] += tensor_val*(*srcData)[d1][d0];
-                                (*dstData)[s2][s1][s0] += (*srcData)[d1][d0];
+                                (*dstData)[s2][s1][s0] += tensor_val*(*srcData)[d1][d0];
+//                                 (*dstData)[s2][s1][s0] += (*srcData)[d1][d0];
                             }
                             end();
                         }
@@ -3069,8 +3061,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void RunWhoop5_Parallel_CSR_ver2( int BufferL1_KB, int BufferL2_KB )
@@ -3082,7 +3073,7 @@ class GraphAlgorithm
         int S0 = adjMat_csf->dim_sizes[1];
         int D0 = adjMat_csf->dim_sizes[0];
 
-        int BUFFET_LINE_SIZE   = 16;
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 
         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -3126,23 +3117,22 @@ class GraphAlgorithm
             /**********************************************************************************/
             /******************************* Setup LLC Buffet Sizes ***************************/
             /**********************************************************************************/
-            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->valArray->AddTileLevel( COORD_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[4]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[3]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[2]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[1]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->coordArray[0]->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->valArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
-            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
-            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, 1, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[4]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[3]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[2]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[1]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+            adjMat_csf->segArray[0]->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
 
 
-            srcData->AddTileLevel( SRC_DATA_BUFFET, 1, BUFFET_LINE_SIZE );
-            dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
-
+            srcData->AddTileLevel( SRC_DATA_BUFFET, SRC_DATA_BUFFET, BUFFET_LINE_SIZE );
+            dstData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
             /**********************************************************************************/
 
             s2 = (*adjMat_csf->coordArray[4])[s2_pos];
@@ -3160,12 +3150,17 @@ class GraphAlgorithm
                 s_for(ct, 0, NUM_DOT_C);
                 {
                     // Dest data buffet size
-                    dstData->AddTileLevel( DST_DATA_BUFFET, 1, BUFFET_LINE_SIZE);
+                    dstData->AddTileLevel( DST_DATA_BUFFET, DST_DATA_BUFFET, BUFFET_LINE_SIZE);
                     srcData->AddTileLevel( 1, 1, BUFFET_LINE_SIZE);
 
+                    adjMat_csf->segArray[4]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
+                    adjMat_csf->segArray[3]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
+                    adjMat_csf->segArray[2]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     adjMat_csf->segArray[1]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     adjMat_csf->segArray[0]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
 
+                    adjMat_csf->coordArray[4]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
+                    adjMat_csf->coordArray[3]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     adjMat_csf->coordArray[2]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     adjMat_csf->coordArray[1]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
                     adjMat_csf->coordArray[0]->AddTileLevel( 1, 1, BUFFET_LINE_SIZE );
@@ -3190,10 +3185,10 @@ class GraphAlgorithm
                             t_for(d0_pos, start_d0_pos, end_d0_pos );
                             {
                                 d0         = (*adjMat_csf->coordArray[0])[d0_pos]; 
-//                                 tensor_val = (*adjMat_csf->valArray)[d0_pos]; 
+                                tensor_val = (*adjMat_csf->valArray)[d0_pos]; 
 
-//                                 (*dstData)[s2][s1][s0] += tensor_val*(*srcData)[d1][d0];
-                                (*dstData)[s2][s1][s0] += (*srcData)[d1][d0];
+                                (*dstData)[s2][s1][s0] += tensor_val*(*srcData)[d1][d0];
+//                                 (*dstData)[s2][s1][s0] += (*srcData)[d1][d0];
                             }
                             end();
                         }
@@ -3223,8 +3218,7 @@ class GraphAlgorithm
         cout<<"DONE!"<<endl;
         cout<<endl;
 
-        extern string ARG_StatsFileName;
-        whoop::Done(ARG_StatsFileName);
+        whoop::Done();
     }
 
     void Run5( FORMAT_TYPE format )
@@ -3295,12 +3289,12 @@ class GraphAlgorithm
                         for(d0_pos=start_d0_pos; d0_pos<end_d0_pos; d0_pos++ )
                         {
                             d0         = adjMat_csf->coordArray[0]->At({d0_pos}); 
-//                             tensor_val = adjMat_csf->valArray->At({d0_pos}); 
+                            tensor_val = adjMat_csf->valArray->At({d0_pos}); 
 
 //                             cout<<"Exec: d1: "<<d1<<" s2: "<<s2<<" s1: "<<s1<<" s0: "<<s0<<" d0: "<<d0<<" ("<<(d1*D0+d0)<<","<<(s2*S1*S0+s1*S0+s0)<<")"<<endl;
                             
-//                             dstData->At({s2,s1,s0}) += tensor_val * srcData->At({d1,d0});
-                            dstData->At({s2,s1,s0}) += srcData->At({d1,d0});
+                            dstData->At({s2,s1,s0}) += tensor_val * srcData->At({d1,d0});
+//                             dstData->At({s2,s1,s0}) += srcData->At({d1,d0});
                         }
                     }
                 }
@@ -3320,7 +3314,9 @@ class GraphAlgorithm
 
     void Run5_CSR_ver2()
     {
-
+//         map<int,int> d0_uniq;
+//         map<int,int> s0_uniq;
+        
         int S2 = adjMat_csf->dim_sizes[4];
         int D1 = adjMat_csf->dim_sizes[3];
         int S1 = adjMat_csf->dim_sizes[2];
@@ -3363,9 +3359,12 @@ class GraphAlgorithm
                 
                     start_s0_pos = adjMat_csf->segArray[1]->At({s1_pos});
                     end_s0_pos   = adjMat_csf->segArray[1]->At({s1_pos+1});
-                
+
+//                     d0_uniq.clear();
+//                     s0_uniq.clear();
                     for(s0_pos=start_s0_pos; s0_pos<end_s0_pos; s0_pos++ )
                     {
+//                         s0_uniq[s0]= s0;
                         s0 = adjMat_csf->coordArray[1]->At({s0_pos});
 
                         start_d0_pos = adjMat_csf->segArray[0]->At({s0_pos});
@@ -3374,14 +3373,20 @@ class GraphAlgorithm
                         for(d0_pos=start_d0_pos; d0_pos<end_d0_pos; d0_pos++ )
                         {
                             d0         = adjMat_csf->coordArray[0]->At({d0_pos}); 
-//                             tensor_val = adjMat_csf->valArray->At({d0_pos}); 
+                            tensor_val = adjMat_csf->valArray->At({d0_pos}); 
 
-//                             cout<<"Exec: d1: "<<d1<<" s2: "<<s2<<" s1: "<<s1<<" s0: "<<s0<<" d0: "<<d0<<" ("<<(d1*D0+d0)<<","<<(s2*S1*S0+s1*S0+s0)<<")"<<endl;
+//                             cout<<"Exec: s2: "<<s2<<" d1: "<<d1<<" s1: "<<s1<<" s0: "<<s0<<" d0: "<<d0<<" ("<<(d1*D0+d0)<<","<<(s2*S1*S0+s1*S0+s0)<<")"<<endl;
+
+
+//                             d0_uniq[d0]= d0;
                             
-//                             dstData->At({s2,s1,s0}) += tensor_val * srcData->At({d1,d0});
-                            dstData->At({s2,s1,s0}) += srcData->At({d1,d0});
+                            dstData->At({s2,s1,s0}) += tensor_val * srcData->At({d1,d0});
+//                             dstData->At({s2,s1,s0}) += srcData->At({d1,d0});
                         }
                     }
+//                     cout<<"D0: "<<s1<<" Size: "<<d0_uniq.size()<<endl;
+//                     cout<<"S0: "<<s1<<" Size: "<<s0_uniq.size()<<endl;
+                    
                 }
             }
         }
@@ -3454,12 +3459,12 @@ class GraphAlgorithm
                         for(s0_pos=start_s0_pos; s0_pos<end_s0_pos; s0_pos++ )
                         {
                             s0         = adjMat_csf->coordArray[0]->At({s0_pos}); 
-//                             tensor_val = adjMat_csf->valArray->At({s0_pos}); 
+                            tensor_val = adjMat_csf->valArray->At({s0_pos}); 
 
 //                             cout<<"Exec: d1: "<<d1<<" s2: "<<s2<<" s1: "<<s1<<" s0: "<<s0<<" d0: "<<d0<<" ("<<(d1*D0+d0)<<","<<(s2*S1*S0+s1*S0+s0)<<")"<<endl;
                             
-//                             dstData->At({s2,s1,s0}) += tensor_val * srcData->At({d1,d0});
-                            dstData->At({s2,s1,s0}) += srcData->At({d1,d0});
+                            dstData->At({s2,s1,s0}) += tensor_val * srcData->At({d1,d0});
+//                             dstData->At({s2,s1,s0}) += srcData->At({d1,d0});
                         }
                     }
                 }
@@ -3556,7 +3561,7 @@ class GraphAlgorithm
 //         int D0 = adjMat_csf->dim_sizes[1];
 //         int S0 = adjMat_csf->dim_sizes[0];
 // 
-//         int BUFFET_LINE_SIZE   = 16;
+//         int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
 // 
 //         int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
 //         int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
@@ -3663,7 +3668,6 @@ class GraphAlgorithm
 //         cout<<"DONE!"<<endl;
 //         cout<<endl;
 // 
-//         extern string ARG_StatsFileName;
-//         whoop::Done(ARG_StatsFileName);
+//         whoop::Done();
 //     }
 //     

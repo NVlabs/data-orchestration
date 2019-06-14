@@ -33,7 +33,9 @@ subdirs = ['conv1d',
            'bellman-ford',
            'graph-processing',
            'conv6d',
-           'matrix-multiply']
+           'matrix-multiply',
+           'pagerank-nibble',
+           'pagerank-nibble-multiseed']
 
 disabled = []
 

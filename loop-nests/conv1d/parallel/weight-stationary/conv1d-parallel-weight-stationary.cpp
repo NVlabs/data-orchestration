@@ -52,48 +52,39 @@ int main(int argc, char** argv)
   const int kOutputWidth = kInputWidth - kWeightWidth + 1;
   outputs.Resize(kOutputWidth);
   
-  assert(kWeightWidth >= kNumPEs );
-
-  if(kWeightWidth % kNumPEs != 0)
-  {
-    std::cout << "[" << argv[0] << "] Number of PEs does not divide weight width. Number of PEs will be updated to weight width ( " << kWeightWidth << ")" << std::endl;
-    kNumPEs = kWeightWidth;
-  }
-
-  const int kPartitionSize = kWeightWidth / kNumPEs;
-
+  whoop::ASSERT(kWeightWidth % kNumPEs == 0) << "Number of PEs: " << kNumPEs << " does not divide weight width: " << kWeightWidth << whoop::EndT;
+ 
   whoop::T(0) << "Input Width: " << kInputWidth << whoop::EndT;
   whoop::T(0) << "Weight Width: " << kWeightWidth << whoop::EndT;
   whoop::T(0) << "Output Width: " << kOutputWidth << whoop::EndT;
   whoop::T(0) << whoop::EndT;
   whoop::T(0) << "NumPEs: " << kNumPEs << whoop::EndT;
-  whoop::T(0) << "Partition size: " << kPartitionSize << whoop::EndT;
+  whoop::T(0) << "Weights per PE: " << kWeightWidth / kNumPEs << whoop::EndT;
   whoop::T(0) << whoop::EndT;
 
   // Short-form variable names
-  const int E = kNumPEs;
   const int W = kInputWidth;
-  const int R = kWeightWidth;
-  const int R1 = kNumPEs;
-  const int R0 = kPartitionSize;
-  const int P = kOutputWidth;
+  const int S = kWeightWidth;
+  const int S1 = kWeightWidth / kNumPEs;
+  const int S0 = kNumPEs;
+  const int Q = kOutputWidth;
 
-  Var r1("r1");
-  Var w("w");
-  Var r0("r0");
-  Var p("p");
+  Var s1("s1");
+  Var s0("s0");
+  Var s("s");
+  Var q("q");
 
-  s_for(r1, 0, R1);
+  t_for(s1, 0, S1);
   {
-    t_for(r0, 0, R0);
+    t_for(q, 0, Q);
     {
-      inputs.AddTileLevel(P, 1);
-      weights.AddTileLevel(1);
-      outputs.AddTileLevel(P);
-
-      t_for(p, 0, P);
+      inputs.AddTileLevel(W);
+      outputs.AddTileLevel(Q);
+      s_for(s0, 0, S0);
       {
-        outputs[p] += inputs[p + r1*R0 + r0] * weights[r1*R0 + r0];
+        weights.AddTileLevel(1);
+        s = s1 * S0 + s0;
+        outputs[q] += inputs[q + s] * weights[s];
       }
       end();
     }
@@ -104,15 +95,6 @@ int main(int argc, char** argv)
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
-
-  for (int x = 0; x < W; x++)
-  {
-    whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
-  }
-  for (int x = 0; x < P; x++)
-  {
-    whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
-  }
 
   whoop::Done();
   

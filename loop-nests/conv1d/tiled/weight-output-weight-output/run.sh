@@ -54,7 +54,7 @@ ${executable} \
   --vec_outputs_file=outputs_${infile}_${wtfile}.out.txt \
   --weight_width_0=3 \
   --weight_width_1=1 \
-  --output_width_0=127 \
-  --output_width_1=2 \
+  --output_width_0=3 \
+  --output_width_1=5 \
   --trace_level=${tlevel}
 

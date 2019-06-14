@@ -37,11 +37,11 @@ int main(int argc, char** argv)
   VecIn  weights("weights");
   VecOut outputs("outputs");
 
-  int kWeightWidthL0 = 4;
-  int kOutputWidthL1 = 64;
+  int kWeightWidthL0 = 3;
+  int kOutputWidthL0 = 3;
 
   whoop::AddOption(&kWeightWidthL0, "weight_width_0,w", "Length of L0 weight tile.");
-  whoop::AddOption(&kOutputWidthL1, "output_width_1,o", "Length of L1 output tile.");
+  whoop::AddOption(&kOutputWidthL0, "output_width_0,o", "Length of L0 output tile.");
 
   whoop::Init(argc, argv);
 
@@ -52,7 +52,7 @@ int main(int argc, char** argv)
   outputs.Resize(kOutputWidth);
 
   const int kWeightWidthL1 = kWeightWidth / kWeightWidthL0;
-  const int kOutputWidthL0 = kOutputWidth / kOutputWidthL1;
+  const int kOutputWidthL1 = kOutputWidth / kOutputWidthL0;
 
   whoop::T(0) << "Input Width: " << kInputWidth << whoop::EndT;
   whoop::T(0) << "Weight Width: " << kWeightWidth << whoop::EndT;
@@ -66,41 +66,45 @@ int main(int argc, char** argv)
   whoop::T(0) << whoop::EndT;
 
   assert(kWeightWidth % kWeightWidthL0 == 0);
-  assert(kOutputWidth % kOutputWidthL1 == 0);
+  assert(kOutputWidth % kOutputWidthL0 == 0);
 
   // Short-form variable names
   const int W = kInputWidth;
-  const int R = kWeightWidth;
-  const int R0 = kWeightWidthL0;
-  const int R1 = kWeightWidthL1;
-  const int P = kOutputWidth;
-  const int P0 = kOutputWidthL0;
-  const int P1 = kOutputWidthL1;
+  const int S = kWeightWidth;
+  const int S0 = kWeightWidthL0;
+  const int S1 = kWeightWidthL1;
+  const int Q = kOutputWidth;
+  const int Q0 = kOutputWidthL0;
+  const int Q1 = kOutputWidthL1;
 
 
-  Var r1("r1");
-  Var r0("r0");
-  Var p1("p1");
-  Var p0("p0");
+  Var s1("s1");
+  Var s0("s0");
+  Var q1("q1");
+  Var q0("q0");
+  
+  
+  Var s("s");
+  Var q("q");
 
-  t_for(p1, 0, P1);
+  t_for(q1, 0, Q1);
   {
-    inputs.AddTileLevel(P0, 1);
+    inputs.AddTileLevel(Q0, 1);
     weights.AddTileLevel(1);
-    outputs.AddTileLevel(P0);
-    t_for(r1, 0, R1);
+    outputs.AddTileLevel(Q0);
+    t_for(s1, 0, S1);
     {
-      t_for(p0, 0, P0);
+      t_for(q0, 0, Q0);
       {
-        inputs.AddTileLevel(R0, 1);
-        weights.AddTileLevel(R0);
+        inputs.AddTileLevel(S0, 1);
+        weights.AddTileLevel(S0);
         outputs.AddTileLevel(1);
 
-        t_for(r0, 0, R0);
+        t_for(s0, 0, S0);
         {
-          outputs[p1 * P0 + p0] += 
-           inputs[p1 * P0 + p0 + r1 * R0 + r0] * 
-                                     weights[r1 * R0 + r0];
+          q = q1 * Q0 + q0;
+          s = s1 * S0 + s0;
+          outputs[q] += inputs[q + s] * weights[s];
         }
         end();
       }
@@ -113,15 +117,6 @@ int main(int argc, char** argv)
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
-
-  for (int x = 0; x < W; x++)
-  {
-    whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
-  }
-  for (int x = 0; x < P; x++)
-  {
-    whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
-  }
 
   whoop::Done();
 }

@@ -34,6 +34,7 @@
 #include <map>
 #include <stack>
 #include <memory>
+#include <bitset>
 
 #include <boost/any.hpp>
 #include <boost/archive/text_oarchive.hpp>
@@ -64,6 +65,7 @@ extern StatsCollection top_stats;
 namespace buff
 {
 
+int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int max_spatial_partitions );
 
 class TraceableBuffer : public Traceable
 {
@@ -88,103 +90,190 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   class BuffetLogInfo
   {
    public:
-    int address_ = 0;
     int index_ = 0;
+    std::bitset<64> receiver_mask_ = 0;
+    std::bitset<64> updater_mask_ = 0;
     bool caused_evict_ = false;
+    bool is_dirty_ = false;
   };
-  std::deque<BuffetLogInfo> buffet_log_;
   activity::BuffetCommandLog command_log_;
   activity::PatternGeneratorLog read_pgen_log_;
   activity::PatternGeneratorLog update_pgen_log_;
+  activity::PatternGeneratorLog destination_pgen_log_;
+  activity::PatternGeneratorLog updaters_pgen_log_;
   activity::ShrinkPatternGeneratorLog shrink_pgen_log_;
+  std::deque<std::pair<int, BuffetLogInfo>> coalescing_buffer_;
+  int coalescing_window_size_ = 32; // XXX TODO: MAKE DYNAMIC
   
   int num_fills_ = 0;
   int num_shrinks_ = 0;
-
-  void LogUpdate(int address, int curr_index)
+  
+  bool CheckCoalescing(int address, int requestor_idx, bool is_update, int* entry = NULL)
   {
-    if (options::kShouldLogActivity)
+    // Purposely search backwards to find the most recent entry.
+    // This way even if the previous entry wasn't evicted will we find the latest.
+    auto it = coalescing_buffer_.rbegin();
+    for ( ; it != coalescing_buffer_.rend(); it++)
     {
-      bool found_read = false;
-      while (buffet_log_.size() != 0 && !found_read)
-      {
-        // Record any shrinks.
-        if (buffet_log_.front().caused_evict_)
-        {
-          command_log_.Shrink();
-          shrink_pgen_log_.Shrink();
-          num_shrinks_++;
-        }
-        if (buffet_log_.front().address_ == address)
-        {
-          // Found the previous read for this update.
-          command_log_.Read(true);
-          read_pgen_log_.Send(buffet_log_.front().index_);
-          found_read = true;
-        }
-        else
-        {
-          // An unrelated previous read with no forthcoming modify.
-          command_log_.Read();
-          read_pgen_log_.Send(buffet_log_.front().index_);
-        }
-        buffet_log_.pop_front();
-      }
-      ASSERT(found_read) << "Non-standard buffet modify without proceeding read. Update address: " << address << EndT;
-      // If this assertion starts failing then maybe we need a more sophisticated tracker?
-      update_pgen_log_.Send(curr_index);
+      if ((*it).first == address) break;
     }
+    if (it != coalescing_buffer_.rend())
+    {
+      assert(requestor_idx < 64);
+      // Don't coalesce your own requests. Can't multicast to yourself!
+      if (!is_update && (*it).second.receiver_mask_[requestor_idx])
+      {
+        return false;
+      }
+      (*it).second.receiver_mask_[requestor_idx] = true;
+      if (is_update)
+      {
+        // For now, don't coalesce more than one update per updater on at a time....
+        if ((*it).second.updater_mask_[requestor_idx])
+        {
+          return false;
+        }
+        (*it).second.updater_mask_[requestor_idx] = true;
+        (*it).second.is_dirty_ = true;
+      }
+      if (entry)
+      {
+        *entry = (*it).second.index_;
+      }
+      return true;
+    }
+    else
+    {
+      return false;
+    }
+  }
+  
+  void LogAccess(int address, int curr_index, int requestor_idx, bool caused_evict)
+  {
+    // Keep track of last accessed address.
+    BuffetLogInfo info;
+    info.index_ = curr_index;
+    assert(requestor_idx < 64);
+    info.receiver_mask_[requestor_idx] = true;
+    info.caused_evict_ = caused_evict;
+    if (coalescing_buffer_.size() == coalescing_window_size_)
+    {
+      // Evict the oldest from the window.
+      RecordInfo(coalescing_buffer_.front().second);
+      coalescing_buffer_.pop_front();
+    }
+    coalescing_buffer_.push_back(std::make_pair(address, info));
+  }
+
+  void LogUpdate(int address, int curr_index, int requestor_idx, bool caused_evict)
+  {
+    ASSERT(!options::kShouldLogActivity) << "Update log coalescing failure. Address: " << address << ", requestor: " << requestor_idx << "(If you are seeing this message a lot we may need to rethink our coalescing assumptions.)" << EndT;
+    // Keep track of last accessed address.
+    BuffetLogInfo info;
+    info.index_ = curr_index;
+    assert(requestor_idx < 64);
+    info.receiver_mask_[requestor_idx] = true;
+    info.caused_evict_ = caused_evict;
+    info.is_dirty_ = true;
+    if (coalescing_buffer_.size() == coalescing_window_size_)
+    {
+      // Evict the oldest from the window.
+      RecordInfo(coalescing_buffer_.front().second);
+      coalescing_buffer_.pop_front();
+    }
+    coalescing_buffer_.push_back(std::make_pair(address, info));
   }
   
   void DrainLog()
   {
-    // Drain all remaining reads without modify.
-    // (This may be all reads, ever... opportunity for efficiency improvement here.)
-    if (options::kShouldLogActivity)
+    // A bit of a hack:
+    // Use a drain writeback if any of the remaining entries are modified.
+    bool is_modified = false;
+    // Drain all remaining coalescing buffer contents, oldest first.
+    for (auto it  = coalescing_buffer_.begin(); 
+              it != coalescing_buffer_.end();
+              it++)
     {
-      while (buffet_log_.size() != 0)
+      is_modified |= (*it).second.is_dirty_;
+      RecordInfo((*it).second);
+    }
+    coalescing_buffer_.clear();
+
+    // Shrink off anything remaining in the buffet.
+    if (num_fills_ > num_shrinks_)
+    {
+      if (is_modified)
       {
-        // Record any shrinks.
-        if (buffet_log_.front().caused_evict_)
-        {
-          command_log_.Shrink();
-          shrink_pgen_log_.Shrink();
-          num_shrinks_++;
-        }
-        // Read without a modify.
-        command_log_.Read();
-        read_pgen_log_.Send(buffet_log_.front().index_);
-        buffet_log_.pop_front();
+        command_log_.SetModified();
       }
-      // Shrink off anything remaining in the buffet.
-      if (num_fills_ > num_shrinks_)
+      command_log_.Shrink(num_fills_ - num_shrinks_);
+      shrink_pgen_log_.Shrink(num_fills_ - num_shrinks_);
+    }
+  }
+  
+  void RecordInfo(const BuffetLogInfo& info)
+  {
+    if (!options::kShouldLogActivity) return;
+
+    // Record any shrinks.
+    if (info.caused_evict_)
+    {
+      if (info.is_dirty_)
       {
-        command_log_.Shrink(num_fills_ - num_shrinks_);
-        shrink_pgen_log_.Shrink(num_fills_ - num_shrinks_);
+        command_log_.SetModified(); // XXX This is not quite right... it should be that the evicted line was dirty... this is a bit of a hack...
       }
+      command_log_.Shrink();
+      shrink_pgen_log_.Shrink();
+      num_shrinks_++;
+    }
+
+    // Record accces.
+    command_log_.Read(info.is_dirty_);
+    read_pgen_log_.Send(command_log_.GetRelativeIndex(info.index_));
+    destination_pgen_log_.Send(info.receiver_mask_.to_ulong());
+
+    // Record any updates
+    if (info.is_dirty_) {
+      // NOTE: Update indexes are purposely absolute in the buffer.
+      update_pgen_log_.Send(info.index_);
+      // Minor hack: the datapath doesn't show up as a source.
+      // So if the mask is 0, make it 1.
+      int final_mask = info.updater_mask_.to_ulong();
+      updaters_pgen_log_.Send(final_mask == 0 ? 1 : final_mask);
     }
   }
  public:
   
   std::shared_ptr<BufferModel> backing_buffer_ = NULL;
+  std::vector<std::shared_ptr<BufferModel>> fronting_buffers_;
+
   int level_;
+  int num_datapaths_ = 0;
+  int local_spatial_idx_;
   
-  explicit BufferModel(int level, const std::string& nm = "") :
+  explicit BufferModel(int level, int local_spatial_idx, const std::string& nm = "") :
     StatsCollection(nm, &top_stats),
     TraceableBuffer(nm),
-    level_(level)
+    level_(level),
+    local_spatial_idx_(local_spatial_idx),
+    fronting_buffers_{}
   {
+    // Start one with 1 update log to start.
   }
   
   void LogActivity(std::ostream& ostr)
   {
-    command_log_.Dump(ostr, Traceable::GetName() + "_commands", "SymphonyBuffet");
+    command_log_.Dump(ostr, Traceable::GetName() + "_commands", "symphony::modules::LocalBuffet");
     ostr << "," << std::endl;
-    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "SymphonyPatternGenerator");
+    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LocalPatternGenerator");
     ostr << "," << std::endl;
-    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "SymphonyPatternGenerator");
+    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LocalPatternGenerator");
     ostr << "," << std::endl;
-    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "SymphonyPatternGenerator");
+    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LocalPatternGenerator");
+    ostr << "," << std::endl;
+    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LocalPatternGenerator");
+    ostr << "," << std::endl;
+    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalPatternGenerator");
   }
   
   void Resize(int size)
@@ -192,9 +281,10 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     command_log_.Resize(size);
   }
   
-  virtual void Access(int address) = 0;
-  virtual void Update(int address) = 0;
+  virtual void Access(int address, int requestor_idx) = 0;
+  virtual void Update(int address, int requestor_idx) = 0;
   virtual void DrainAll() = 0;
+  virtual void FlushBuffet() = 0;
   virtual void FixupLevelNumbering(int final_num_levels) = 0;
   virtual void SetBufferWidth(int width) = 0;
 };
@@ -220,7 +310,7 @@ class OffChipBufferModel : public BufferModel
     {
       rowbuffer_active_idx_ = addr_idx;
       IncrStat("Offchip row buffer miss");
-      T(4) << "Row buffer hit for write to address " << address << EndT;
+      T(4) << "Row buffer miss for read to address " << address << EndT;
     }
   }
 
@@ -229,34 +319,48 @@ class OffChipBufferModel : public BufferModel
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
   OffChipBufferModel(const std::string& nm, int size) : 
-    BufferModel(0, nm)
+    BufferModel(0, 0, nm)
   {
     AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (offchip memory)" + nm);
-    command_log_.Init(size, false);
+    command_log_.Init(size, 0, false);
   }
 
-  virtual void Access(int address)
+  virtual void Access(int address, int requestor_idx)
   {
-    CheckRowBufferHit(address);
     
-    IncrStat("Offchip reads");
-    T(4) << "Read, address: " << address << EndT;
-    BuffetLogInfo info;
-    info.address_ = address;
-    info.index_ = address;
-    info.caused_evict_ = false;
-
-    if (!options::kShouldLogActivity)  buffet_log_.clear();
-    buffet_log_.push_back(info);
+    if (CheckCoalescing(address, requestor_idx, false))
+    {  
+      IncrStat("Offchip multicasts");
+      T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
+    }
+    else
+    {
+      CheckRowBufferHit(address);
+      IncrStat("Offchip reads");
+      T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
+      LogAccess(address, address, requestor_idx, false);
+    }
   }
   
-  virtual void Update(int address)
+  virtual void Update(int address, int requestor_idx)
   {
-    CheckRowBufferHit(address);
+    if (CheckCoalescing(address, requestor_idx, true))
+    {  
+      IncrStat("Offchip multi-reduces");
+      T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
+    }
+    else
+    {
+      CheckRowBufferHit(address);
 
-    IncrStat("Offchip updates");
-    LogUpdate(address, address);
-    T(4) << "Update, address: " << address << EndT;
+      IncrStat("Offchip updates");
+      LogUpdate(address, address, requestor_idx, false);
+      T(4) << "Update, address: " << address  << " by requestor: " << requestor_idx << EndT;
+    }
+  }
+
+  virtual void FlushBuffet()
+  {
   }
   virtual void DrainAll()
   {
@@ -277,7 +381,6 @@ class OffChipBufferModel : public BufferModel
 class AssociativeBufferModel : public BufferModel
 {
  public:
-    
   std::unordered_map<int, int> presence_info_;
   std::vector<int> cache_;
   std::vector<int> modified_; // NOTE: We had some problems with std::vector<bool>
@@ -286,11 +389,17 @@ class AssociativeBufferModel : public BufferModel
   int size_;
   int granularity_;
   int buffet_size_;
+  int extra_buffering_ = 0;
     
-  explicit AssociativeBufferModel(int size, int level, const std::string& nm = "", int shrink_granularity = 0, int granularity = 1) : 
-    cache_(size/granularity), modified_(size/granularity), size_(size/granularity), BufferModel(level, nm), granularity_(granularity), buffet_size_(size)
+  explicit AssociativeBufferModel(int size, int level, int local_spatial_idx, const std::string& nm = "", int shrink_granularity = 0, int granularity = 1) : 
+    cache_(size/granularity), 
+    modified_(size/granularity), 
+    size_(size/granularity), 
+    BufferModel(level, local_spatial_idx, nm), 
+    granularity_(granularity), 
+    buffet_size_(size)
   {
-    command_log_.Init(size/granularity);
+    command_log_.Init(size/granularity, extra_buffering_/granularity);
     command_log_.SetShrinkGranularity(shrink_granularity == 0 ? size/granularity : shrink_granularity);
     shrink_pgen_log_.SetShrinkGranularity(shrink_granularity == 0 ? size/granularity : shrink_granularity);
   }
@@ -315,44 +424,42 @@ class AssociativeBufferModel : public BufferModel
 
     // Note that the address coming in is just the index within the tensor, not
     // the actual address
-  virtual void Access(int addr)
+  virtual void Access(int addr, int requestor_idx)
   {
     int address = addr - (addr % granularity_);
-      
+    
+    if (CheckCoalescing(address, requestor_idx, false))
+    {
+      IncrStat("L" + std::to_string(level_) + " multicasts");
+      T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx << EndT;
+      return;
+    }
+    
     IncrStat("L" + std::to_string(level_) + " reads");
-    T(4) << "Read, address: " << address << EndT;
+    T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
 
     bool found        = false;
     bool caused_evict = false;
     int  curr_index = -1;
     
-    if (buffet_log_.size() != 0 && buffet_log_.back().address_ == address)
+    auto it = presence_info_.find(address);
+    if (it != presence_info_.end())
     {
       found = true;
-      curr_index = buffet_log_.back().index_;
+      curr_index = it->second;
       T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
-    }
-    else
-    {
-      auto it = presence_info_.find(address);
-      if (it != presence_info_.end())
-      {
-        found = true;
-        curr_index = it->second;
-        T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
-      }
     }
     
     if (!found)
     {
       IncrStat("L" + std::to_string(level_) + " fills");
       num_fills_++;
-      backing_buffer_->Access(address);
+      backing_buffer_->Access(address, local_spatial_idx_);
       if (occupancy_ == size_)
       {
         if (modified_[head_] == 1)
         {
-          backing_buffer_->Update(cache_[head_]);
+          backing_buffer_->Update(cache_[head_], local_spatial_idx_);
         }
 
         // remove victim from unordered_map
@@ -363,7 +470,7 @@ class AssociativeBufferModel : public BufferModel
         caused_evict = true;
       }
       int tail = ModAdd(head_, occupancy_);
-      T(4) << "    (Filling from next level to index: " << tail << ")" << EndT;
+      T(4) << "    (Filling from next level to index: " << tail << ", caused_evict:" << caused_evict << ")" << EndT;
 
       cache_[tail] = address;
       modified_[tail] = 0;
@@ -373,45 +480,38 @@ class AssociativeBufferModel : public BufferModel
       presence_info_[address] = tail;
       curr_index             = tail;
     }
-    
-    // Keep track of last accessed address.
-    BuffetLogInfo info;
-    info.address_ = address;
-    info.index_ = command_log_.GetRelativeIndex(curr_index);
-    info.caused_evict_ = caused_evict;
-
-    if (!options::kShouldLogActivity)  buffet_log_.clear();
-    buffet_log_.push_back(info);
+    LogAccess(address, curr_index, requestor_idx, caused_evict);
   }
 
   // Note that the address coming in is just the index within the tensor, not
   // the actual address
-  virtual void Update(int addr)
+  virtual void Update(int addr, int requestor_idx)
   {
     int address = addr - (addr % granularity_);
-    IncrStat("L" + std::to_string(level_) + " updates");
-    T(4) << "Update, address: " << address << EndT;
 
-    bool found      = false;
-    int  curr_index = -1;
-    
-    if (buffet_log_.size() != 0 && buffet_log_.back().address_ == address)
+    int entry;
+    if (CheckCoalescing(address, requestor_idx, true, &entry))
     {
-      curr_index =  buffet_log_.back().index_;
-      modified_[curr_index] = 1;
-      found = true;
-      T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
+      IncrStat("L" + std::to_string(level_) + " multi-reduces");
+      T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx << EndT;
+      modified_[entry] = true;
+      return;
     }
-    else 
+    
+    IncrStat("L" + std::to_string(level_) + " updates");
+    T(4) << "Update, address: " << address << " by requestor: " << requestor_idx << EndT;
+
+    bool found        = false;
+    bool caused_evict = false;
+    int  curr_index = -1;
+
+    auto it = presence_info_.find(address);
+    if (it != presence_info_.end())
     {
-      auto it = presence_info_.find(address);
-      if (it != presence_info_.end())
-      {
-        curr_index = it->second;
-        modified_[curr_index] = 1;
-        T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
-        found = true;
-      }
+      curr_index = it->second;
+      modified_[curr_index] = 1;
+      T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
+      found = true;
     }
 
     if (!found)
@@ -420,7 +520,7 @@ class AssociativeBufferModel : public BufferModel
       {
         if (modified_[head_] == 1)
         {
-          backing_buffer_->Update(cache_[head_]);
+          backing_buffer_->Update(cache_[head_], local_spatial_idx_);
         }
 
         // remove victim from unordered_map
@@ -428,10 +528,11 @@ class AssociativeBufferModel : public BufferModel
 
         ModIncr(head_);
         occupancy_--;
+        caused_evict = true;
       }
 
       int tail = ModAdd(head_, occupancy_);
-      T(4) << "    (Allocating on write to index: " << tail << ".)" << EndT;
+      T(4) << "    (Allocating on write to index: " << tail << ", caused_evict:" << caused_evict << ")" << EndT;
       cache_[tail] = address;
       modified_[tail] = 1;
       occupancy_++;
@@ -440,21 +541,31 @@ class AssociativeBufferModel : public BufferModel
       presence_info_[address] = tail;
       curr_index              = tail;
     }
-    LogUpdate(address, curr_index);
+    LogUpdate(address, curr_index, requestor_idx, caused_evict);
     command_log_.SetModified();
   }
-  
+        
   virtual void DrainAll()
   {
     for (int x = 0; x < occupancy_; x++)
     {
-      if (modified_[ModAdd(head_, x)] == 1)
+      int entry = ModAdd(head_, x);
+      if (modified_[entry] == 1)
       {
-        backing_buffer_->Update(cache_[x]);
+        backing_buffer_->Update(cache_[entry], local_spatial_idx_);
+
+        // since it has been drained, no longer modified
+        modified_[entry] = 0;
       }
     }
     occupancy_ = 0;
     DrainLog();
+  }
+
+  virtual void FlushBuffet()
+  {
+      presence_info_.clear();
+      DrainAll();
   }
   
   virtual void FixupLevelNumbering(int final_num_levels)
@@ -587,6 +698,9 @@ class PrimTensor : public StatsCollection
   
   std::vector<int> dim_sizes_; // 0 == innermost, N-1 == outermost
   std::vector<int> vals_;
+  // The following information is important both for optimizations
+  // and for correct tracefile generation.
+  bool is_updated_dynamically_ = false;
   
   // We use a stack to represent the tile levels so that we can
   // add to it as we go through loops. (Impelemented as a deque for iterators.)
@@ -642,24 +756,27 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& spatial_part_idx = 0, const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const int& new_val, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0,  const int& port_idx = 0)
   {
+    is_updated_dynamically_ = true;
     // TODO: better error messages.
-    int my_spatial_part_idx = spatial_part_idx % (*buffer_levels_[port_idx]->back()).size();
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx]->back()).size(), max_spatial_partitions );
+    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx]->back()).size());
 
     IncrStat("Tensor updates");
     UINT64 idx = FlattenIndices(idxs);
     vals_[idx] = new_val;
-    (*buffer_levels_[port_idx]->back())[my_spatial_part_idx]->Update(idx);
+    (*buffer_levels_[port_idx]->back())[buffer_spatial_part_idx]->Update(idx, local_spatial_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& spatial_part_idx = 0, const int& port_idx = 0)
+  int Access(const std::vector<int>& idxs, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0, const int& port_idx = 0)
   {
-    int my_spatial_part_idx = spatial_part_idx % (*buffer_levels_[port_idx]->back()).size();
-      
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx]->back()).size(), max_spatial_partitions );      
+    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx]->back()).size());
+
     IncrStat("Tensor reads");
     UINT64 idx = FlattenIndices(idxs);
-    (*buffer_levels_[port_idx]->back())[my_spatial_part_idx]->Access(idx);
+    (*buffer_levels_[port_idx]->back())[buffer_spatial_part_idx]->Access(idx, local_spatial_idx);
     return vals_[idx];
   }
 
@@ -755,7 +872,20 @@ class PrimTensor : public StatsCollection
       }
     }
   }
-  
+
+  void FixupDatapathUpdates(int datapaths_per_first_level_buffer)
+  {
+    for (auto port_it : buffer_levels_)
+    {
+      for (auto level_it : *port_it)
+      {
+        for (auto buf_it : *level_it)
+        {
+          (*buf_it).num_datapaths_ = datapaths_per_first_level_buffer;
+        }
+      }
+    }
+  }
   void DrainAll()
   {
     for (auto port : buffer_levels_)
@@ -790,11 +920,11 @@ class PrimTensor : public StatsCollection
   void LogActivity(std::ostream& ostr)
   {
     bool is_first = true;
-    for (auto port : buffer_levels_)
+    for (auto& port : buffer_levels_)
     {
-      for (auto buffer_level : *port)
+      for (auto& buffer_level : *port)
       {
-        for (auto buff : *buffer_level)
+        for (auto& buff : *buffer_level)
         {
           if (!is_first)
           {
@@ -808,7 +938,105 @@ class PrimTensor : public StatsCollection
         }
       }
     }
-  } 
+  }
+
+  void LogTopologyModules(std::ostream& ostr)
+  {
+    for (auto& port : buffer_levels_)
+    {
+      for (auto& buffer_level : *port)
+      {
+        for (auto& buff : *buffer_level)
+        {
+          ostr << "  - type: module" << std::endl;
+          ostr << "    class: symphony::modules::BuffetComplex" << std::endl;
+          ostr << "    base_name: " << buff->Traceable::GetName() << std::endl;
+          ostr << "    configuration:" << std::endl;
+          ostr << "      knobs_use_prefix: false" << std::endl;
+          ostr << "      knobs:" << std::endl;
+          if (buff->fronting_buffers_.size() != 0)
+          {
+            ostr << "        - \"num_receivers = " << buff->fronting_buffers_.size() << "\""  << std::endl;
+            if (is_updated_dynamically_)
+            {
+              ostr << "        - \"num_updaters = " << buff->fronting_buffers_.size() << "\""  << std::endl;
+            }
+          }
+          else
+          {
+            ostr << "        - \"num_receivers = " << buff->num_datapaths_ << "\""  << std::endl;
+            ostr << "        - \"num_updaters = " << buff->num_datapaths_ << "\""  << std::endl;          
+          }
+          ostr << std::endl;
+        }
+      }
+    }
+  }
+  void LogTopologyConnections(std::ostream& ostr, int tensor_idx)
+  {
+    for (auto& port : buffer_levels_)
+    {
+      for (auto& buffer_level : *port)
+      {
+        int local_spatial_idx = 0;
+        for (auto& buff : *buffer_level)
+        {
+          if (buff->fronting_buffers_.size() != 0)
+          {
+            for (int dst_idx = 0; dst_idx < buff->fronting_buffers_.size(); dst_idx++)
+            {
+              // The buffer feeds another (usually smaller) buffer.
+              ostr << "      - src:" << std::endl;
+              ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+              ostr << "          port-name: read_data_out_[" << dst_idx << "]" << std::endl;
+              ostr << "        dst:" << std::endl;
+              ostr << "          - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+              ostr << "            port-name: fill_data_in_" << std::endl;
+            }
+            // Only updated tensors get a drain path.
+            if (is_updated_dynamically_)
+            {
+              for (int dst_idx = 0; dst_idx < buff->fronting_buffers_.size(); dst_idx++)
+              {
+                ostr << "      - src:" << std::endl;
+                ostr << "        - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+                ostr << "          port-name: drain_data_out_" << std::endl;
+                ostr << "        dst:" << std::endl;
+                ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+                ostr << "          port-name: update_data_in_[" << dst_idx << "]" << std::endl;                
+              }
+            }
+          }
+          else
+          {
+            // The buffer feeds datapaths, other buffers.
+            for (int x = 0; x < buff->num_datapaths_; x++)
+            {
+              int dp_idx = local_spatial_idx * buff->num_datapaths_ + x;
+              ostr << "      - src:" << std::endl;
+              ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+              ostr << "          port-name: read_data_out_[" << x << "]" << std::endl;
+              ostr << "        dst:" << std::endl;
+              ostr << "        - name: compute_engine_[" << dp_idx << "]" << std::endl;
+              ostr << "          port-name: input_[" << tensor_idx << "]" << std::endl; // Note: This index could be smarter.
+              // Only updated tensors get an update path.
+              if (is_updated_dynamically_)
+              {
+                // TODO: Deal with the case where multiple tensors are updated by the same same datapath.
+                ostr << "      - src:" << std::endl;
+                ostr << "        - name: compute_engine_[" << dp_idx << "]" << std::endl;
+                ostr << "          port-name: output_" << std::endl;
+                ostr << "        dst:" << std::endl;
+                ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+                ostr << "          port-name: update_data_in_[" << x << "]" << std::endl;
+              }
+            }       
+          }
+          local_spatial_idx++;
+        }
+      }
+    }
+  }
 };
 
   
@@ -816,8 +1044,10 @@ class ExecutionContext
 {
  public:
   std::deque<std::pair<int, int>> partition_stack_{};
+  // These are stored flattened (meaning expanded across all nested s_fors)
   int current_spatial_partition_ = 0;
-
+  int max_spatial_partitions_ = 1;
+    
   void BeginSpatialPartitioning(int num_partitions)
   {
     partition_stack_.push_back({current_spatial_partition_, num_partitions});
@@ -834,12 +1064,19 @@ class ExecutionContext
       }
       current_base += (*it).first * expansion_factor;
     }
+    if( num_partitions == 0 ) 
+    {
+        std::cout<<"Why is num partitions zero?"<<std::endl;
+        exit(0);
+    }
+    max_spatial_partitions_ *= num_partitions;
     current_spatial_partition_ = current_base;
   }
-
+  
   void EndSpatialPartitioning()
   {
     current_spatial_partition_ = partition_stack_.back().first;
+    max_spatial_partitions_ /= partition_stack_.back().second;
     partition_stack_.pop_back();
   }
 
@@ -851,6 +1088,11 @@ class ExecutionContext
   int CurrentSpatialPartition()
   {
     return current_spatial_partition_;
+  }
+
+  int MaxSpatialPartitions()
+  {
+    return max_spatial_partitions_;
   }
 };
 
@@ -943,7 +1185,7 @@ class TensorAccess : public Expression
   {
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
-    return target_.Access(v, ctx.CurrentSpatialPartition(), port_);
+    return target_.Access(v, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
   }
 };
 
@@ -1197,7 +1439,7 @@ class TensorAssignment : public Statement
     int res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
-    target_.Update(vidxs, res, ctx.CurrentSpatialPartition(), port_);
+    target_.Update(vidxs, res, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
     T(4) << "Done: tensor assignment." << EndT;
     Statement::Execute(ctx);
   }
@@ -1234,6 +1476,39 @@ class While : public Statement
   }
 };
 
+// TODO:  timewhoop will need support for Flush -ajaleel
+class Flush : public Statement
+{
+ public:
+  // include tensor pointer
+  PrimTensor*                                 tensor_ptr_;
+  int                                         level_;
+  std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>>  buffs_;
+
+    Flush( ast::PrimTensor *ptr_in, int level, std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>>  buffs_in)
+  {
+      tensor_ptr_ = ptr_in;
+      level_      = level;
+      buffs_      = buffs_in;
+  }
+
+  virtual void Execute(ExecutionContext& ctx)
+  {
+    T(4) << "Entering: Flush Buffer." << EndT;
+    T(4) << "  Tensor: "<<tensor_ptr_->name_<< EndT;
+    T(4) << "  Spatial Partition: "<<ctx.current_spatial_partition_<< EndT;
+
+    
+    int num_buffs  = buffs_->size();
+
+    auto buf_id  = whoop::buff::GetBufIndex( ctx.CurrentSpatialPartition(), num_buffs, ctx.MaxSpatialPartitions() );
+    
+    (*buffs_)[buf_id]->FlushBuffet();
+    
+    T(4) << "Done: Flush Bufer." << EndT;
+    Statement::Execute(ctx);
+  }
+};
 
 class TemporalFor : public Statement
 {

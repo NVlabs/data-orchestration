@@ -1,0 +1,6 @@
+Import('env')
+
+
+spmv    = Split(""" spmv_master.cpp """)
+
+env.Program(target = 'spmv.bin', source = spmv)

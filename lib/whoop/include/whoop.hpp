@@ -39,6 +39,8 @@
 #include "stats.hpp"
 #include "abstract-syntax.hpp"
 
+extern int ARG_FLUSH_BUFFETS;
+
 namespace whoop
 {
 
@@ -189,6 +191,7 @@ class TreeBuilder;
     ast::TensorAccess* body_e = v.ToTensorAccess(); \
     return operator OP(c, TreeBuilder(body_e)); \
   } \
+
 
 
 // spatial_partition_levels
@@ -572,7 +575,7 @@ class Tensor : public ast::PrimTensor
  private:
   void Init()
   {
-    std::shared_ptr<buff::BufferModel> offchip(new buff::OffChipBufferModel(name_ + "_offchip", vals_.size()));
+    std::shared_ptr<buff::BufferModel> offchip(new buff::OffChipBufferModel("offchip_" + name_, vals_.size()));
     std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>> 
         offchip_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, offchip));
     // Add port 0, and add the offchip buffer to it.
@@ -667,9 +670,10 @@ class Tensor : public ast::PrimTensor
     int backing_iteration_interval = num_flat / num_backing_stores;
 
     auto backing_it = buffer_levels_[port]->back()->begin();
+
     for (int x = 0; x < num_flat; x++)
     {
-      std::string nm = name_ + "_buffer";
+      std::string nm = name_;
       if (port != 0)
       {
         nm = nm + "_port_" + std::to_string(port);
@@ -682,9 +686,11 @@ class Tensor : public ast::PrimTensor
       {
         size += (granularity - (size % granularity));
       }
-      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, nm, shrink_granularity, granularity));
+      int local_idx = x % backing_iteration_interval;
+      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, local_idx, nm, shrink_granularity, granularity));
       (*new_buffs)[x] = new_buff;
       (*new_buffs)[x]->backing_buffer_ = *backing_it;
+      (*backing_it)->fronting_buffers_.push_back(new_buff);
       if (x != 0 && x % backing_iteration_interval == 0)
       {
         backing_it++;
@@ -692,7 +698,16 @@ class Tensor : public ast::PrimTensor
     }
     buffer_levels_[port]->push_back(new_buffs);
 
-    the_program.cur_stmt_->buffer_border_info.push_back(this);
+    the_program.cur_stmt_->buffer_border_info.push_back(this);    
+
+    if( whoop::options::kShouldFlushTiles )
+    {
+        // Calling FlushBufferHandler --ajaleel
+        std::cout<<"Setting Up Auto Flush For Buffet Levels of: "<<name_<<" Level: "<<level<<" flat: "<<num_flat<<std::endl;
+        ast::Flush *stmt = new ast::Flush( this, level, new_buffs );
+        the_program.Add(stmt);
+    }
+
   }
   
   int AddPort()
@@ -892,7 +907,7 @@ class Vec : public Tensor
     Tensor(nm)
   {
   }
-  
+
   Vec(const int& size, const int& init_val, const std::string& nm = "") :
     Tensor({size}, init_val, nm)
   {
@@ -902,7 +917,9 @@ class Vec : public Tensor
     Tensor({size}, init_func, nm)
   {
   }
-
+  
+  
+  
   int Size()
   {
     return FlattenSizes(dim_sizes_);

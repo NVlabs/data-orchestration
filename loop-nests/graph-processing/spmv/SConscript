@@ -27,9 +27,7 @@
 Import('env')
 
 subdirs = [
-           'reference-compressed',
-           'untiled-compressed',
-           'tiled-compressed'
+           'spmv_csf',
           ]
 
 disabled = []

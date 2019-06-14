@@ -52,25 +52,25 @@ int main(int argc, char** argv)
 
   //Short-form variable names
   const int W = kInputWidth;
-  const int R = kWeightWidth;
-  const int P = kOutputWidth;
+  const int S = kWeightWidth;
+  const int Q = kOutputWidth;
 
-  Var r("r");
+  Var s("s");
   Var w("w");
 
   t_for(w, 0, kInputWidth);
   {
     inputs.AddTileLevel(1);
-    weights.AddTileLevel(R);
-    outputs.AddTileLevel(R, 1);
+    weights.AddTileLevel(S);
+    outputs.AddTileLevel(S, 1);
 
-    t_for(r, 0, R);
+    t_for(s, 0, S);
     {
-      w_if(w - r >= 0);
+      w_if(w - s >= 0);
       {
-        w_if(P - 1 >= w - r);
+        w_if(Q - 1 >= w - s);
         {
-          outputs[w - r] += inputs[w] * weights[r];
+          outputs[w - s] += inputs[w] * weights[s];
         }
         end();
       }
@@ -83,15 +83,6 @@ int main(int argc, char** argv)
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
-
-  for (int x = 0; x < W; x++)
-  {
-    whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
-  }
-  for (int x = 0; x < P; x++)
-  {
-    whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
-  }
 
   whoop::Done();
 }

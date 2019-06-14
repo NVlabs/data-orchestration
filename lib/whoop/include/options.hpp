@@ -43,12 +43,14 @@ namespace options
 
 // ******* Dynamic options (see options.cpp to change default value) *******
 extern bool kShouldCheckReferenceOutput;
+extern bool kShouldFlushTiles;
 extern bool kShouldTraceExecution;
 extern bool kShouldTraceBuffers;
 extern bool kShouldLogActivity;
 extern int kCurrentTraceLevel;
 extern int kUserTraceLevel;
 extern std::string kProgramName;
+extern std::string kStatsFileName;
 
 
 // This function parses the user's environment variables and over-rides the

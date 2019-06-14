@@ -15,7 +15,7 @@ int ARG_S_TILE_SIZE        = 32;
 int ARG_D_TILE_SIZE        = 32; 
 int ARG_TILE_SIZE_OVERRIDE = 0;
 int ARG_PRINT_GRAPH        = 0;
-int ARG_NUM_COMPUTE_TILE   = 64;
+int ARG_NUM_COMPUTE_TILE   = 1;
 int ARG_NUM_DOT_C          = NUM_DOT_C;
 int ARG_NUM_DOT_M          = -1;
 int ARG_L1_BUFFET_SIZE_KB  = 64;
@@ -24,11 +24,8 @@ int ARG_RUN_SERIAL         = 0;
 int ARG_RUN_MODE           = 0;
 int ARG_COMPRESSION_FORMAT = 0;
 
-string ARG_StatsFileName   = "stats.txt";
-
 void MyInit(int argc, char** argv)
 {
-    AddOption( &ARG_StatsFileName, "stats", "Stats File Name");
     AddOption( &ARG_S_TILE_SIZE, "src_tile_size", "Source      Tile Size");
     AddOption( &ARG_D_TILE_SIZE, "dst_tile_size", "Destination Tile Size");
     AddOption( &ARG_TILE_SIZE_OVERRIDE, "override_tile_size", "Override The Tile Size");
