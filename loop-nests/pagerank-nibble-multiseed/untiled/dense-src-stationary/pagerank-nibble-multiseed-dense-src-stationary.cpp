@@ -63,12 +63,6 @@ int main(int argc, char** argv)
   degree.Resize(kNumDsts);
   seed_done.Resize(kNumSeeds);
 
-  is_in_frontier.SetUpdatedDynamically();
-  residuals.SetUpdatedDynamically();
-  old_residuals.SetUpdatedDynamically();
-  degree.SetUpdatedDynamically();
-  seed_done.SetUpdatedDynamically();
-
   // Initialize starting residuals
   for (int n = 0; n < kNumSeeds; n++)
   {

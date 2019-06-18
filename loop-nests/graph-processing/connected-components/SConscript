@@ -30,13 +30,12 @@ subdirs = [
            'reference-adjmat',
            'reference-compressed',
            'untiled-compressed',
-           'tiled-compressed',
            'tiled-compressed2',
            'tiled-adjmat',
            'tiled-csf',
           ]
 
-disabled = []
+disabled = ['tiled-compressed']
 
 for subdir in subdirs:
     env.SConscript('%s/SConscript' % subdir, {'env': env})

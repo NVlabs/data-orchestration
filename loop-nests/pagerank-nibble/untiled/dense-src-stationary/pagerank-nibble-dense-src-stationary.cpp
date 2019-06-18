@@ -60,11 +60,6 @@ int main(int argc, char** argv)
   old_residuals.Resize(kNumDsts);
   degree.Resize(kNumDsts);
 
-  is_in_frontier.SetUpdatedDynamically();
-  residuals.SetUpdatedDynamically();
-  old_residuals.SetUpdatedDynamically();
-  degree.SetUpdatedDynamically();
-
   // Initialize starting residuals
   is_in_frontier.At(starting_node) = 1;
   old_residuals.At(starting_node) = 1;
