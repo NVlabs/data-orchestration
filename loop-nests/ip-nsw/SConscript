@@ -26,8 +26,9 @@
 
 Import('env')
 
-subdirs = ['whoop', 'timewhoop', 'swoop']
+sources = Split("""
+ip-nsw.cpp
+""")
 
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+env.Program(target = 'ip-nsw.bin', source = sources)
 
