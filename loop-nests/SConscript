@@ -34,6 +34,7 @@ subdirs = ['conv1d',
            'graph-processing',
            'conv6d',
            'matrix-multiply',
+           'basic-sparsity',
            'pagerank-nibble',
            'pagerank-nibble-multiseed']
 

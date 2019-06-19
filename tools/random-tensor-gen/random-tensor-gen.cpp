@@ -33,11 +33,13 @@ int main(int argc, char** argv)
   int seed = 1717;
   int min_val = 0;
   int max_val = 255;
+  int monotonically_increasing = 0;
 
-  whoop::AddOption(&dim_sizes, "dim_sizes,d", "List of dimension sizes.");
+  whoop::AddOption(&dim_sizes, "dim_sizes,d", "List of dimension sizes, e.g. --dim_sizes 100 200 300");
   whoop::AddOption(&seed,      "seed,s",      "Seed for random number generator.");
   whoop::AddOption(&max_val,   "max,x",       "Maximum possible random number.");
   whoop::AddOption(&min_val,   "min,m",       "Minimum possible random number.");
+  whoop::AddOption(&monotonically_increasing,   "monotonic,mm",       "Should the numbers monotonically increase?");
 
   whoop::TensorOut output("output");
 
@@ -57,6 +59,13 @@ int main(int argc, char** argv)
   for (int x = 0; x < size; x++)
   {
     output.PrimAt(x) = (rand() % (max_val - min_val)) + min_val;
+  }
+  if (monotonically_increasing != 0)
+  {
+    for (int x = 1; x < size; x++)
+    {
+      output.PrimAt(x) += output.PrimAt(x-1);
+    }
   }
   
   whoop::Done();

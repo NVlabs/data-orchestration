@@ -34,7 +34,7 @@ env = Environment(ENV = os.environ)
 
 debug = ARGUMENTS.get('debug',0)
 
-env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++14'])
+env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++17'])
 env.Append(LIBPATH = ['#lib/whoop'])
 env.Append(CPPPATH = ['#lib/whoop/include'])
 env.Append(LIBPATH = ['#lib/timewhoop'])
@@ -50,7 +50,7 @@ if os.environ.get('BOOSTDIR'):
     env.Append(CPPPATH = [os.environ['BOOSTDIR'] + '/include'])
     env.Append(LIBPATH = [os.environ['BOOSTDIR'] + '/lib'])
 
-env.Append(LINKFLAGS = ['-std=c++11', '-pthread', '-static-libgcc', '-static-libstdc++'])
+env.Append(LINKFLAGS = ['-std=c++17', '-pthread', '-static-libgcc', '-static-libstdc++'])
 
 env.Append(LIBS = ['whoop', 'timewhoop', 'boost_program_options', 'boost_serialization'])
 
