@@ -36,6 +36,54 @@
 namespace whoop
 {
 
+std::vector<std::vector<activity::ComputeEngineLog*>> compute_logs{};
+
+void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions)
+{
+  compute_logs.resize(flattened_tile_level_spatial_expansions.size());
+  for (int x = 0; x < flattened_tile_level_spatial_expansions.size(); x++)
+  {
+    std::cout << "Adding partition of logs: " << flattened_tile_level_spatial_expansions[x] << std::endl;
+    compute_logs[x].resize(flattened_tile_level_spatial_expansions[x], new activity::ComputeEngineLog());
+  }
+}
+
+void LogComputeActivity(std::ostream& ostr)
+{
+  for (int tile_level = 0; tile_level < compute_logs.size(); tile_level++)
+  {
+    for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
+    {
+      compute_logs[tile_level][local_index]->Dump(ostr, "compute_engine[" + std::to_string(tile_level) + "][" + std::to_string(local_index) + "]", "symphony::modules::ComputeEngineComplex");
+
+      if (!(tile_level == compute_logs.size() - 1 &&
+            local_index == compute_logs[tile_level].size() - 1))
+      {
+        ostr << ",";
+      }
+      ostr << std::endl;
+    }
+  }
+}
+
+void LogComputeTopology(std::ostream& ofile, int num_tensors)
+{
+  for (int tile_level = 0; tile_level < compute_logs.size(); tile_level++)
+  {
+    for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
+    {
+      ofile << "  - type: module" << std::endl;
+      ofile << "    class: symphony::modules::ComputeEngineComplex" << std::endl;
+      ofile << "    base_name: compute_engine[" << tile_level << "][" << local_index << "]" << std::endl;
+      ofile << "    configuration:" << std::endl;
+      ofile << "      knobs_use_prefix: false" << std::endl;
+      ofile << "      knobs:" << std::endl;
+      ofile << "        - \"num_in = " << num_tensors << "\""  << std::endl;
+      ofile << "        - \"num_out = " << num_tensors << "\""  << std::endl;
+    }
+  }
+}
+
 namespace buff
 {
 int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int max_spatial_partitions )

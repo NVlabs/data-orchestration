@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
 				visited[c] = 1;
 
 				t_for (d, 0, D); { 
-					dataOut[d] = data[D*c + d];
+					dataOut[d] = data[D*c + d] + (dataOut[d] * 0);
 				} end();
 
 			} end();

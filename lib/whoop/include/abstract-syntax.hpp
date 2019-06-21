@@ -35,6 +35,7 @@
 #include <stack>
 #include <memory>
 #include <bitset>
+#include <numeric>
 
 #include <boost/any.hpp>
 #include <boost/archive/text_oarchive.hpp>
@@ -61,6 +62,11 @@ namespace whoop
 // top_stats
 // Global variable to serve as top-of-tree for stats dump
 extern StatsCollection top_stats;
+
+extern std::vector<std::vector<activity::ComputeEngineLog*>> compute_logs;
+void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions);
+void LogComputeActivity(std::ostream& ostr);
+void LogComputeTopology(std::ostream& ofile, int num_tensors);
 
 namespace buff
 {
@@ -248,17 +254,23 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   std::vector<std::shared_ptr<BufferModel>> fronting_buffers_;
 
   int level_;
-  int num_datapaths_ = 0;
+  // Individual tensors may not participate in all global tile levels.
+  // E.g. the L2 weights tile may be the last tile of weights.
+  int starting_global_tile_level_;
+  int ending_global_tile_level_;
+  std::vector<int> num_datapaths_;
   int local_spatial_idx_;
   
-  explicit BufferModel(int level, int local_spatial_idx, const std::string& nm = "") :
+  explicit BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "") :
     StatsCollection(nm, &top_stats),
     TraceableBuffer(nm),
     level_(level),
+    starting_global_tile_level_(starting_tile_level),
+    ending_global_tile_level_(starting_tile_level + 1),
+    num_datapaths_(1, 1),
     local_spatial_idx_(local_spatial_idx),
     fronting_buffers_{}
   {
-    // Start one with 1 update log to start.
   }
   
   void LogActivity(std::ostream& ostr)
@@ -280,7 +292,24 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   {
     command_log_.Resize(size);
   }
-  
+ 
+  void ExpandDatapaths(int global_tile_level, int num)
+  {
+    int tile_level = global_tile_level - starting_global_tile_level_;
+    if (tile_level >= num_datapaths_.size())
+    {
+      // Any unmentioned layers must have 1 datapath.
+      num_datapaths_.resize(tile_level+1, 1);
+    }
+    num_datapaths_[tile_level] *= num;
+  }
+
+  int GetNumReceivers()
+  {
+    int flat_datapaths = std::accumulate(num_datapaths_.begin(), num_datapaths_.end(), 0);
+    return fronting_buffers_.size() + flat_datapaths;
+  }
+ 
   virtual void Access(int address, int requestor_idx) = 0;
   virtual void Update(int address, int requestor_idx) = 0;
   virtual void DrainAll() = 0;
@@ -319,7 +348,7 @@ class OffChipBufferModel : public BufferModel
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
   OffChipBufferModel(const std::string& nm, int size) : 
-    BufferModel(0, 0, nm)
+    BufferModel(0, 0, 0, nm)
   {
     AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (offchip memory)" + nm);
     command_log_.Init(size, 0, false);
@@ -375,7 +404,6 @@ class OffChipBufferModel : public BufferModel
   {
     rowbuffer_width_ = buffer_width;
   }
-
 };
 
 class AssociativeBufferModel : public BufferModel
@@ -391,11 +419,11 @@ class AssociativeBufferModel : public BufferModel
   int buffet_size_;
   int extra_buffering_ = 0;
     
-  explicit AssociativeBufferModel(int size, int level, int local_spatial_idx, const std::string& nm = "", int shrink_granularity = 0, int granularity = 1) : 
+  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "", int shrink_granularity = 0, int granularity = 1) : 
     cache_(size/granularity), 
     modified_(size/granularity), 
     size_(size/granularity), 
-    BufferModel(level, local_spatial_idx, nm), 
+    BufferModel(level, starting_tile_level, local_spatial_idx, nm), 
     granularity_(granularity), 
     buffet_size_(size)
   {
@@ -698,6 +726,8 @@ class PrimTensor : public StatsCollection
   
   std::vector<int> dim_sizes_; // 0 == innermost, N-1 == outermost
   std::vector<int> vals_;
+  // A global id for this tensor in the list of all tensors.
+  int id_;
   // The following information is important both for optimizations
   // and for correct tracefile generation.
   bool is_updated_dynamically_ = false;
@@ -756,27 +786,31 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const int& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx]->back()).size(), max_spatial_partitions );
-    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx]->back()).size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), max_spatial_partitions );
+    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
 
     IncrStat("Tensor updates");
     UINT64 idx = FlattenIndices(idxs);
     vals_[idx] = new_val;
-    (*buffer_levels_[port_idx]->back())[buffer_spatial_part_idx]->Update(idx, local_spatial_idx);
+    auto buffer_to_access = (*(*buffer_levels_[port_idx])[tile_level])[buffer_spatial_part_idx];
+    // Datapath access ids are offset by the fronting buffers.
+    buffer_to_access->Update(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0, const int& port_idx = 0)
+  int Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0, const int& port_idx = 0)
   {
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx]->back()).size(), max_spatial_partitions );      
-    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx]->back()).size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), max_spatial_partitions );      
+    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
 
     IncrStat("Tensor reads");
     UINT64 idx = FlattenIndices(idxs);
-    (*buffer_levels_[port_idx]->back())[buffer_spatial_part_idx]->Access(idx, local_spatial_idx);
+    auto buffer_to_access = (*(*buffer_levels_[port_idx])[tile_level])[buffer_spatial_part_idx];
+    // Datapath access ids are offset by the fronting buffers.
+    buffer_to_access->Access(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
     return vals_[idx];
   }
 
@@ -873,19 +907,18 @@ class PrimTensor : public StatsCollection
     }
   }
 
-  void FixupDatapathUpdates(int datapaths_per_first_level_buffer)
+  void ExpandDatapaths(int global_tile_level, int num)
   {
     for (auto port_it : buffer_levels_)
     {
-      for (auto level_it : *port_it)
+      auto last_level = (*port_it).back();
+      for (auto buf_it : *last_level)
       {
-        for (auto buf_it : *level_it)
-        {
-          (*buf_it).num_datapaths_ = datapaths_per_first_level_buffer;
-        }
+        (*buf_it).ExpandDatapaths(global_tile_level, num);
       }
     }
   }
+
   void DrainAll()
   {
     for (auto port : buffer_levels_)
@@ -954,25 +987,14 @@ class PrimTensor : public StatsCollection
           ostr << "    configuration:" << std::endl;
           ostr << "      knobs_use_prefix: false" << std::endl;
           ostr << "      knobs:" << std::endl;
-          if (buff->fronting_buffers_.size() != 0)
-          {
-            ostr << "        - \"num_receivers = " << buff->fronting_buffers_.size() << "\""  << std::endl;
-            if (is_updated_dynamically_)
-            {
-              ostr << "        - \"num_updaters = " << buff->fronting_buffers_.size() << "\""  << std::endl;
-            }
-          }
-          else
-          {
-            ostr << "        - \"num_receivers = " << buff->num_datapaths_ << "\""  << std::endl;
-            ostr << "        - \"num_updaters = " << buff->num_datapaths_ << "\""  << std::endl;          
-          }
+          ostr << "        - \"num_receivers = " << buff->GetNumReceivers() << "\""  << std::endl;
+          ostr << "        - \"num_updaters = " << buff->GetNumReceivers() << "\""  << std::endl;
           ostr << std::endl;
         }
       }
     }
   }
-  void LogTopologyConnections(std::ostream& ostr, int tensor_idx)
+  void LogTopologyConnections(std::ostream& ostr, int max_tile_level)
   {
     for (auto& port : buffer_levels_)
     {
@@ -981,56 +1003,45 @@ class PrimTensor : public StatsCollection
         int local_spatial_idx = 0;
         for (auto& buff : *buffer_level)
         {
-          if (buff->fronting_buffers_.size() != 0)
+          for (int dst_idx = 0; dst_idx < buff->fronting_buffers_.size(); dst_idx++)
           {
-            for (int dst_idx = 0; dst_idx < buff->fronting_buffers_.size(); dst_idx++)
-            {
-              // The buffer feeds another (usually smaller) buffer.
-              ostr << "      - src:" << std::endl;
-              ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-              ostr << "          port-name: read_data_out_[" << dst_idx << "]" << std::endl;
-              ostr << "        dst:" << std::endl;
-              ostr << "          - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
-              ostr << "            port-name: fill_data_in_" << std::endl;
-            }
-            // Only updated tensors get a drain path.
-            if (is_updated_dynamically_)
-            {
-              for (int dst_idx = 0; dst_idx < buff->fronting_buffers_.size(); dst_idx++)
-              {
-                ostr << "      - src:" << std::endl;
-                ostr << "        - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
-                ostr << "          port-name: drain_data_out_" << std::endl;
-                ostr << "        dst:" << std::endl;
-                ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-                ostr << "          port-name: update_data_in_[" << dst_idx << "]" << std::endl;                
-              }
-            }
+            // The buffer feeds another (usually smaller) buffer.
+            ostr << "      - src:" << std::endl;
+            ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+            ostr << "          port-name: read_data_out_[" << dst_idx << "]" << std::endl;
+            ostr << "        dst:" << std::endl;
+            ostr << "          - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+            ostr << "            port-name: fill_data_in_" << std::endl;
+            ostr << "      - src:" << std::endl;
+            ostr << "        - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+            ostr << "          port-name: drain_data_out_" << std::endl;
+            ostr << "        dst:" << std::endl;
+            ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+            ostr << "          port-name: update_data_in_[" << dst_idx << "]" << std::endl;
           }
-          else
+          // The buffer feeds datapaths between it and the next tile level 
+          // where this tensor participates.
+          // If there is no such tile level then it covers all the remaining levels.
+          int end_level = buff->ending_global_tile_level_ == buff->starting_global_tile_level_ ? max_tile_level : buff->ending_global_tile_level_;
+          for (int tile_level = buff->starting_global_tile_level_; tile_level < end_level; tile_level++)
           {
-            // The buffer feeds datapaths, other buffers.
-            for (int x = 0; x < buff->num_datapaths_; x++)
+            int num_dpaths = buff->num_datapaths_[tile_level - buff->starting_global_tile_level_];
+            for (int x = 0; x < num_dpaths; x++)
             {
-              int dp_idx = local_spatial_idx * buff->num_datapaths_ + x;
+              int dp_idx = local_spatial_idx * num_dpaths + x;
               ostr << "      - src:" << std::endl;
               ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-              ostr << "          port-name: read_data_out_[" << x << "]" << std::endl;
+              ostr << "          port-name: read_data_out_[" << buff->fronting_buffers_.size() + x << "]" << std::endl;
               ostr << "        dst:" << std::endl;
-              ostr << "        - name: compute_engine_[" << dp_idx << "]" << std::endl;
-              ostr << "          port-name: input_[" << tensor_idx << "]" << std::endl; // Note: This index could be smarter.
-              // Only updated tensors get an update path.
-              if (is_updated_dynamically_)
-              {
-                // TODO: Deal with the case where multiple tensors are updated by the same same datapath.
-                ostr << "      - src:" << std::endl;
-                ostr << "        - name: compute_engine_[" << dp_idx << "]" << std::endl;
-                ostr << "          port-name: output_" << std::endl;
-                ostr << "        dst:" << std::endl;
-                ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-                ostr << "          port-name: update_data_in_[" << x << "]" << std::endl;
-              }
-            }       
+              ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
+              ostr << "          port-name: input_[" << id_ << "]" << std::endl; // Note: This index could be smarter.
+              ostr << "      - src:" << std::endl;
+              ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
+              ostr << "          port-name: output_[" << id_ << "]" << std::endl;
+              ostr << "        dst:" << std::endl;
+              ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
+              ostr << "          port-name: update_data_in_[" << buff->fronting_buffers_.size() + x << "]" << std::endl;
+            }
           }
           local_spatial_idx++;
         }
@@ -1161,11 +1172,12 @@ class TensorAccess : public Expression
 
   PrimTensor& target_;
   std::list<Expression*> idx_exprs_;
+  int tile_level_ = 0;
   int port_ = 0;
   
   TensorAccess(PrimTensor& v) : target_(v) {}
 
-  TensorAccess(PrimTensor& v, const std::list<Expression*>& e, const int port = 0) : target_(v), idx_exprs_(e), port_(port) {}
+  TensorAccess(PrimTensor& v, const std::list<Expression*>& e, const int tile_level, const int port = 0) : target_(v), idx_exprs_(e), tile_level_(tile_level), port_(port) {}
 
   virtual std::shared_ptr<timewhoop::Expression> ConvertExpression()
   {
@@ -1185,7 +1197,8 @@ class TensorAccess : public Expression
   {
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
-    return target_.Access(v, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
+    compute_logs[tile_level_][ctx.CurrentSpatialPartition()]->LogInputTensor(target_.id_);
+    return target_.Access(v, tile_level_, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
   }
 };
 
@@ -1314,7 +1327,6 @@ class Statement : public ExecTraceable
   Statement* next_ = NULL;
   Statement* inner_ = NULL;
   Statement* else_ = NULL;
-  std::list<PrimTensor*> buffer_border_info;
 
   virtual std::shared_ptr<timewhoop::Statement> ConvertStatement()
   {
@@ -1391,6 +1403,7 @@ class TensorAssignment : public Statement
   PrimTensor& target_;
   std::list<Expression*> idx_exprs_;
   Expression* body_ = NULL;
+  int tile_level_ = 0;
   int port_ = 0;
   
   TensorAssignment(PrimTensor& t) : 
@@ -1403,8 +1416,8 @@ class TensorAssignment : public Statement
   {
   }
 
-  TensorAssignment(PrimTensor& t, const std::list<Expression*> idx_e, Expression* body_e, const int& port = 0) : 
-    target_(t), idx_exprs_(idx_e), body_(body_e), port_(port)
+  TensorAssignment(PrimTensor& t, const std::list<Expression*> idx_e, Expression* body_e, const int& tile_level, const int& port = 0) : 
+    target_(t), idx_exprs_(idx_e), body_(body_e), tile_level_(tile_level), port_(port)
   {
   }
 
@@ -1439,7 +1452,9 @@ class TensorAssignment : public Statement
     int res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
-    target_.Update(vidxs, res, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
+    target_.Update(vidxs, res, tile_level_, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
+    // TODO: Capture multicasting to datapaths.
+    compute_logs[tile_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
     T(4) << "Done: tensor assignment." << EndT;
     Statement::Execute(ctx);
   }

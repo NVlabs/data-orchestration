@@ -38,13 +38,16 @@ namespace whoop
 Program the_program{};
 StatsCollection top_stats{"top"};
 std::deque<int> spatial_partition_levels{};
-int number_of_datapaths = 1;
-int number_of_first_level_buffers = 1;
+std::vector<std::deque<int>> tile_level_deliminators{};
+std::vector<int> current_tile_level{};
+int max_tile_level = 0;
+std::deque<int> global_tile_level_deliminators{};
+int current_global_tile_level = 0;
+std::vector<int> tile_level_spatial_expansions{1};
 std::list<InFromFile*> need_input{};
 std::list<OutToFile*> need_output{};
 std::list<Tensor*> all_tensors{};
 std::list<Var*> all_vars{};
-int num_datapaths_ = 1;
 int num_warnings_ = 0;
 UserTracer user_tracer_;
 Flusher EndT{};
@@ -113,7 +116,11 @@ void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
   // Now put it all together.
   ast::SpatialFor* stmt = new ast::SpatialFor(end_const, init_s, test_e, incr_s);
   spatial_partition_levels.push_back(end_const);
-  num_datapaths_ *= end_const;
+  tile_level_spatial_expansions[max_tile_level] *= end_const;
+  for (auto& t : all_tensors)
+  {
+    t->ExpandDatapaths(max_tile_level, end_const);
+  }
   the_program.AddIncomplete(stmt);
 }
 
@@ -183,8 +190,8 @@ void t_for(ast::PrimVar& v,  TreeBuilder init_const,  Var& end_const)
 
 void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const)
 {
-  ast::TensorAccess* init_e = new ast::TensorAccess(init_const.target_, init_const.idx_exprs_);
-  ast::TensorAccess* end_e = new ast::TensorAccess(end_const.target_, end_const.idx_exprs_);
+  ast::TensorAccess* init_e = init_const.ToTensorAccess();
+  ast::TensorAccess* end_e = end_const.ToTensorAccess();
   t_for(v, TreeBuilder(init_e), TreeBuilder(end_e));
 }
 
@@ -250,6 +257,26 @@ void w_else_if(const int& test_const)
 void end()
 {
   the_program.CompleteCurrent();
+  // Check if this end() matches up with an AddTileLevel for any tensor.
+  for (int x = 0; x < all_tensors.size(); x++)
+  {
+    if (tile_level_deliminators[x].size() > 0)
+    {
+      if (spatial_partition_levels.size() == tile_level_deliminators[x].back())
+      {
+        tile_level_deliminators[x].pop_back();
+        current_tile_level[x]--;
+      }
+    }
+  }
+  if (global_tile_level_deliminators.size() > 0)
+  {
+    if (spatial_partition_levels.size() == global_tile_level_deliminators.back())
+    {
+      global_tile_level_deliminators.pop_back();
+      current_global_tile_level--;
+    }
+  }
   spatial_partition_levels.pop_back();
   ast::EndLoop* stmt = new ast::EndLoop();
   the_program.Add(stmt);
@@ -310,12 +337,9 @@ void LogActivity(std::string fname)
   for (auto it = all_tensors.begin(); it != all_tensors.end(); it++)
   {
     (*it)->LogActivity(ofile);
-    if (it != std::prev(all_tensors.end()))
-    {
-      ofile << ",";
-    }
-    ofile << std::endl;
+    ofile << "," << std::endl;
   }
+  LogComputeActivity(ofile);
   ofile << "  ]" << std::endl;
   ofile << "}" << std::endl;
 }
@@ -330,26 +354,14 @@ void LogTensorTopology(std::string fname)
   {
     (*it)->LogTopologyModules(ofile);
   }
-  for (int x = 0; x < num_datapaths_; x++)
-  {
-    ofile << "  - type: module" << std::endl;
-    ofile << "    class: symphony::modules::LocalComputeEngine" << std::endl;
-    ofile << "    base_name: compute_engine_[" << x << "]" << std::endl;
-    ofile << "    configuration:" << std::endl;
-    ofile << "      knobs_use_prefix: false" << std::endl;
-    ofile << "      knobs:" << std::endl;
-    ofile << "        - \"num_in = " << all_tensors.size() << "\""  << std::endl; // TODO: real number
-
-  }
+  LogComputeTopology(ofile, all_tensors.size());
   ofile << std::endl;
   ofile << "  - type: local_connection" << std::endl;
   ofile << "    connections:" << std::endl;
 
-  int num = 0;
   for (auto it = all_tensors.begin(); it != all_tensors.end(); it++)
   {
-    (*it)->LogTopologyConnections(ofile, num);
-    num++;
+    (*it)->LogTopologyConnections(ofile, max_tile_level + 1);
   }
   
   ofile << std::endl;
@@ -439,11 +451,19 @@ void Done(std::string ofile)
 void Run()
 {
   user_tracer_.ASSERT(spatial_partition_levels.size() == 0) << "You have a missing end() call in the loop nest -- Please check!" << EndT;
-    
+  
+  // Flatten the spatial expansions across tile levels in order to
+  // make the indexing math easy.
+  auto flattened_tile_level_spatial_expansions = tile_level_spatial_expansions;
+  for (int x = 1; x < flattened_tile_level_spatial_expansions.size(); x++)
+  {
+    flattened_tile_level_spatial_expansions[x] *= flattened_tile_level_spatial_expansions[x-1];
+  }
+  InitializeComputeLogs(flattened_tile_level_spatial_expansions);
+  
   for (auto it = all_tensors.begin(); it != all_tensors.end(); it++)
   {
     (*it)->FixupBufferLevelNumbering();
-    (*it)->FixupDatapathUpdates(num_datapaths_ / (*it)->buffer_levels_[0]->back()->size());
     (*it)->SetTraceLevel(options::kCurrentTraceLevel);
   }
   the_program.Run();

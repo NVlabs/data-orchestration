@@ -85,6 +85,7 @@ int main(int argc, char** argv)
   t_for(p1, 0, P1);
   {
     inputs.AddTileLevel(P0 + R0, 1);
+    weights.AddTileLevel(1);
     outputs.AddTileLevel(P0);
     t_for(r1, 0, R1);
     {
