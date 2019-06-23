@@ -34,18 +34,18 @@ int main(int argc, char** argv)
   using namespace whoop;
 
   // Input graph.
-  TensorIn is_connected("adj_matrix.64.64");
-  TensorIn is_in_neighbor_sample("neib_sample.64.64");
-  TensorIn features("features.64.8");
+  TensorIn is_connected("adj_matrix");
+  TensorIn is_in_neighbor_sample("neib_sample");
+  TensorIn features("features");
 
   // Trained model.
-  TensorIn W_in("W_in.16.8");
-  TensorIn W_1("W_1.16.32"), b_1("b_1.16");
-  TensorIn W_2("W_2.16.16"), b_2("b_2.16");
-  TensorIn W_out("W_out.16");
+  TensorIn W_in("W_in");
+  TensorIn W_1("W_1"), b_1("b_1");
+  TensorIn W_2("W_2"), b_2("b_2");
+  TensorIn W_out("W_out");
 
   // Output predictions.
-  TensorOut prediction("prediction.64");
+  TensorOut prediction("prediction");
 
   // Intermediate tensors.
   Tensor is_in_batch("batch");

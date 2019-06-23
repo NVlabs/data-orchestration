@@ -33,27 +33,19 @@ int main(int argc, char** argv)
 {
   using namespace whoop;
 
-  const int kGraphVertices = 64;
-  const int kFeatureSize = 8;
-  const int kHiddenLayerSize = 16;
-  const int kBatchSize = 8;
-  
   // Input graph.
-  TensorIn is_connected("adj_matrix.64.64");
-  TensorIn is_in_neighbor_sample("neib_sample.64.64");
-  TensorIn features("features.64.8");
+  TensorIn is_connected("adj_matrix");
+  TensorIn is_in_neighbor_sample("neib_sample");
+  TensorIn features("features");
 
   // Trained model.
-  TensorIn W_in("W_in.16.8");
-  TensorIn W_1("W_1.16.32"), b_1("b_1.16");
-  TensorIn W_2("W_2.16.16"), b_2("b_2.16");
-  TensorIn W_out("W_out.16");
+  TensorIn W_in("W_in");
+  TensorIn W_1("W_1"), b_1("b_1");
+  TensorIn W_2("W_2"), b_2("b_2");
+  TensorIn W_out("W_out");
 
   // Output predictions.
-  TensorOut prediction("prediction.64");
-  prediction.Resize({ kGraphVertices });
-
-  whoop::Init(argc, argv);
+  TensorOut prediction("prediction");
 
   // Intermediate tensors.
   Tensor is_in_batch("batch");
@@ -61,40 +53,60 @@ int main(int argc, char** argv)
   Tensor src_sums("src_sums"), src_count("src_count");
   Tensor activation("activation");
 
-  is_in_batch.Resize({ kGraphVertices });
-  n1_sums.Resize({ kGraphVertices, kHiddenLayerSize });
-  n1_count.Resize({ kGraphVertices });
-  src_sums.Resize({ kGraphVertices, kHiddenLayerSize });
-  src_count.Resize({ kGraphVertices });
-  activation.Resize({ 2*kHiddenLayerSize });
+  // Init.
+  whoop::Init(argc, argv);
+
+  // Sizes.
+  int num_vertices = is_connected.Size(0);
+  int feature_size = features.Size(0);
+  int hidden_layer_size = W_in.Size(1);
   
-  for (int vertex_id = 0; vertex_id < kGraphVertices; vertex_id++)
+  int batch_size = 8;
+
+  assert(is_connected.Size(1) == num_vertices);
+  assert(features.Size(1) == num_vertices);
+  assert(W_in.Size(0) == feature_size);
+  assert(W_1.Size(0) == 2*hidden_layer_size && W_1.Size(1) == hidden_layer_size);
+  assert(b_1.Size(0) == hidden_layer_size);
+  assert(W_2.Size(0) == hidden_layer_size && W_2.Size(1) == hidden_layer_size);
+  assert(b_2.Size(0) == hidden_layer_size);
+  assert(W_out.Size(0) == hidden_layer_size);
+  
+  prediction.Resize({ num_vertices });
+  is_in_batch.Resize({ num_vertices });
+  n1_sums.Resize({ num_vertices, hidden_layer_size });
+  n1_count.Resize({ num_vertices });
+  src_sums.Resize({ num_vertices, hidden_layer_size });
+  src_count.Resize({ num_vertices });
+  activation.Resize({ 2*hidden_layer_size });
+  
+  for (int vertex_id = 0; vertex_id < num_vertices; vertex_id++)
   {
     is_in_batch.At({ vertex_id }) = 0;
     n1_count.At({ vertex_id }) = 0;
     src_count.At({ vertex_id }) = 0;    
-    for (int h = 0; h < kHiddenLayerSize; h++)
+    for (int h = 0; h < hidden_layer_size; h++)
     {
       n1_sums.At({ vertex_id, h }) = 0;
     }
   }
 
-  for (int h = 0; h < 2*kHiddenLayerSize; h++)
+  for (int h = 0; h < 2*hidden_layer_size; h++)
   {
     activation.At({ h }) = 0;
   }
   
   // Choose random nodes to place in batch.
 
-  for (int vertex_id = 0; vertex_id < kGraphVertices; vertex_id++)
+  for (int vertex_id = 0; vertex_id < num_vertices; vertex_id++)
   {
     is_in_batch.At({ vertex_id }) = 0;
   }
   
   int chosen = 0;
-  while (chosen < kBatchSize)
+  while (chosen < batch_size)
   {
-    int vertex_id = rand() % kGraphVertices;
+    int vertex_id = rand() % num_vertices;
     if (is_in_batch.At({ vertex_id }) == 0)
     {
       is_in_batch.At({ vertex_id }) = 1;
@@ -116,9 +128,9 @@ int main(int argc, char** argv)
   Var mean("mean");
   
   // Short-form variable names
-  const int V = kGraphVertices;
-  const int F = kFeatureSize;
-  const int H = kHiddenLayerSize;
+  int V = num_vertices;
+  int F = feature_size;
+  int H = hidden_layer_size;
   
   // The algorithm.
   t_for(s, 0, V);
@@ -250,7 +262,7 @@ int main(int argc, char** argv)
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
 
-  for (int v = 0; v < kGraphVertices; v++)
+  for (int v = 0; v < num_vertices; v++)
   {
     if (is_in_batch.At({ v }))
     {

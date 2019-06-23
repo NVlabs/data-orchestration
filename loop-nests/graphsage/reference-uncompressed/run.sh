@@ -46,14 +46,14 @@ out_dir=../output/
 
 # Run the program with some interesting (and legal) default settings
 WHOOP_CHECK_REFERENCE=0 ./graphsage.bin \
-  --tensor_adj_matrix.$vertices.$vertices_file=$in_dir/adj_matrix.$vertices.$vertices.in.txt \
-  --tensor_neib_sample.$vertices.$vertices_file=$in_dir/neib_sample.$vertices.$vertices.in.txt \
-  --tensor_features.$vertices.$features_file=$in_dir/features.$vertices.$features.in.txt \
-  --tensor_W_in.$hidden.$features_file=$in_dir/W_in.$hidden.$features.in.txt \
-  --tensor_W_1.$hidden.$intermed_file=$in_dir/W_1.$hidden.$intermed.in.txt \
-  --tensor_b_1.$hidden_file=$in_dir/b_1.$hidden.in.txt \
-  --tensor_W_2.$hidden.$hidden_file=$in_dir/W_2.$hidden.$hidden.in.txt \
-  --tensor_b_2.$hidden_file=$in_dir/b_2.$hidden.in.txt \
-  --tensor_W_out.$hidden_file=$in_dir/W_out.$hidden.in.txt \
-  --tensor_prediction.$vertices_file=$out_dir/prediction.$vertices.ref.txt \
+  --tensor_adj_matrix_file=$in_dir/adj_matrix.$vertices.$vertices.in.txt \
+  --tensor_neib_sample_file=$in_dir/neib_sample.$vertices.$vertices.in.txt \
+  --tensor_features_file=$in_dir/features.$vertices.$features.in.txt \
+  --tensor_W_in_file=$in_dir/W_in.$hidden.$features.in.txt \
+  --tensor_W_1_file=$in_dir/W_1.$hidden.$intermed.in.txt \
+  --tensor_b_1_file=$in_dir/b_1.$hidden.in.txt \
+  --tensor_W_2_file=$in_dir/W_2.$hidden.$hidden.in.txt \
+  --tensor_b_2_file=$in_dir/b_2.$hidden.in.txt \
+  --tensor_W_out_file=$in_dir/W_out.$hidden.in.txt \
+  --tensor_prediction_file=$out_dir/prediction.$vertices.ref.txt \
   --trace_level=${tlevel}
