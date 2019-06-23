@@ -37,7 +37,8 @@ subdirs = ['conv1d',
            'basic-sparsity',
            'pagerank-nibble',
            'pagerank-nibble-multiseed',
-           'ip-nsw']
+           'ip-nsw',
+           'graphsage']
 
 disabled = []
 
