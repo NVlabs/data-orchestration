@@ -40,13 +40,13 @@ for b = [0..B):
   batch[s, b] = true
   
   for n1_pos = [0..N):
-    n1_idx = rand() % num_neibs[s]
-    n1 = neib_lookup[n1_idx]
+    n1_idx = rand() % adj_count[s]
+    n1 = adj_lookup[s, n1_idx]
     n1_sample[s, b, n1, n1_pos] = true
     
     for n2_pos = [0..N):
-      n2_idx = rand() % num_neibs[n1]
-      n2 = neib_lookup[n2_idx]
+      n2_idx = rand() % adj_count[n1]
+      n2 = adj_lookup[n1, n2_idx]
       n2_sample[s, b, n1, n1_pos, n2, n2_pos] = true
       
 # Previously, we were using a set of "parent" tensors to locate parent notes to propagate values to.

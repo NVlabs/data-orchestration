@@ -47,7 +47,6 @@ out_dir=../output/
 # Run the program with some interesting (and legal) default settings
 WHOOP_CHECK_REFERENCE=0 ./graphsage.bin \
   --tensor_adj_matrix_file=$in_dir/adj_matrix.$vertices.$vertices.in.txt \
-  --tensor_neib_sample_file=$in_dir/neib_sample.$vertices.$vertices.in.txt \
   --tensor_features_file=$in_dir/features.$vertices.$features.in.txt \
   --tensor_W_in_file=$in_dir/W_in.$hidden.$features.in.txt \
   --tensor_W_1_file=$in_dir/W_1.$hidden.$intermed.in.txt \

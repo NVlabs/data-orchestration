@@ -34,9 +34,8 @@ int main(int argc, char** argv)
   using namespace whoop;
 
   // Input graph.
-  TensorIn is_connected("adj_matrix");
-  TensorIn is_in_neighbor_sample("neib_sample");
   TensorIn features("features");
+  TensorIn is_connected("adj_matrix");
 
   // Trained model.
   TensorIn W_in("W_in");
@@ -48,10 +47,17 @@ int main(int argc, char** argv)
   TensorOut prediction("prediction");
 
   // Intermediate tensors.
-  Tensor is_in_batch("batch");
+  Tensor batch("batch");
+  Tensor n1_sample("n1_sample");
+  Tensor n2_sample("n2_sample");
+  
   Tensor n1_sums("n1_sums"), n1_count("n1_count");
   Tensor src_sums("src_sums"), src_count("src_count");
   Tensor activation("activation");
+
+  // Un-simulated tensors.
+  Tensor adj_lookup("adj_lookup");
+  Tensor adj_count("adj_count");
 
   // Init.
   whoop::Init(argc, argv);
@@ -62,182 +68,217 @@ int main(int argc, char** argv)
   int hidden_layer_size = W_in.Size(1);
   
   int batch_size = 8;
+  int num_sampled_neighbors = 3;
 
-  assert(is_connected.Size(1) == num_vertices);
-  assert(features.Size(1) == num_vertices);
-  assert(W_in.Size(0) == feature_size);
-  assert(W_1.Size(0) == 2*hidden_layer_size && W_1.Size(1) == hidden_layer_size);
-  assert(b_1.Size(0) == hidden_layer_size);
-  assert(W_2.Size(0) == hidden_layer_size && W_2.Size(1) == hidden_layer_size);
-  assert(b_2.Size(0) == hidden_layer_size);
-  assert(W_out.Size(0) == hidden_layer_size);
+  // Short-form variable names
+  int V = num_vertices;
+  int F = feature_size;
+  int B = batch_size;
+  int H = hidden_layer_size;
+  int N = num_sampled_neighbors;
   
-  prediction.Resize({ num_vertices });
-  is_in_batch.Resize({ num_vertices });
-  n1_sums.Resize({ num_vertices, hidden_layer_size });
-  n1_count.Resize({ num_vertices });
-  src_sums.Resize({ num_vertices, hidden_layer_size });
-  src_count.Resize({ num_vertices });
-  activation.Resize({ 2*hidden_layer_size });
+  assert(is_connected.Size(1) == V);
+  assert(features.Size(1) == V);
+  assert(W_in.Size(0) == F);
+  assert(W_1.Size(0) == 2*H && W_1.Size(1) == H);
+  assert(b_1.Size(0) == H);
+  assert(W_2.Size(0) == H && W_2.Size(1) == H);
+  assert(b_2.Size(0) == H);
+  assert(W_out.Size(0) == H);
   
-  for (int vertex_id = 0; vertex_id < num_vertices; vertex_id++)
+  prediction.Resize({ V, B });
+  
+  batch.Resize({ V, B });
+  n1_sample.Resize({ V, B, V, N });
+  n2_sample.Resize({ V, B, V, N, V, N });
+  
+  n1_sums.Resize({ V, B, V, N, H });
+  n1_count.Resize({ V, B, V, N });
+  src_sums.Resize({ V, B, H });
+  src_count.Resize({ V, B });
+  
+  activation.Resize({ 2*H });
+
+  adj_lookup.Resize({ V, V });
+  adj_count.Resize({ V });
+  
+  // for (int vertex_id = 0; vertex_id < V; vertex_id++)
+  // {
+  //   batch.At({ vertex_id }) = 0;
+  //   n1_count.At({ vertex_id }) = 0;
+  //   src_count.At({ vertex_id }) = 0;    
+  //   for (int h = 0; h < H; h++)
+  //   {
+  //     n1_sums.At({ vertex_id, h }) = 0;
+  //   }
+  // }
+
+  // for (int h = 0; h < 2*H; h++)
+  // {
+  //   activation.At({ h }) = 0;
+  // }
+
+  // Pre-generate some useful graph meta-data (essentially an adjacency list).
+  for (int s = 0; s < V; s++)
   {
-    is_in_batch.At({ vertex_id }) = 0;
-    n1_count.At({ vertex_id }) = 0;
-    src_count.At({ vertex_id }) = 0;    
-    for (int h = 0; h < hidden_layer_size; h++)
+    int count = 0;
+    for (int d = 0; d < V; d++)
     {
-      n1_sums.At({ vertex_id, h }) = 0;
+      if (is_connected.At({ s, d }) == 1)
+      {
+        adj_lookup.At({ s, count++ }) = d;
+      }
+    }
+    adj_count.At({ s }) = count;
+  }
+
+  // Pre-generate (in un-simulated code) batch, n1 and n2 samples.
+  for (int b = 0; b < B; b++)
+  {
+    int s = rand() % V;
+    batch.At({ s, b }) = 1;
+
+    for (int n1_pos = 0; n1_pos < N; n1_pos++)
+    {
+      int n1_idx = rand() % adj_count.At({ s });
+      int n1 = adj_lookup.At({ s, n1_idx });
+      n1_sample.At({ s, b, n1, n1_pos }) = 1;
+
+      for (int n2_pos = 0; n2_pos < N; n2_pos++)
+      {
+        int n2_idx = rand() % adj_count.At({ n1 });
+        int n2 = adj_lookup.At({ n1, n2_idx });
+        n2_sample.At({ s, b, n1, n1_pos, n2, n2_pos }) = 1;
+      }
     }
   }
-
-  for (int h = 0; h < 2*hidden_layer_size; h++)
-  {
-    activation.At({ h }) = 0;
-  }
-  
-  // Choose random nodes to place in batch.
-
-  for (int vertex_id = 0; vertex_id < num_vertices; vertex_id++)
-  {
-    is_in_batch.At({ vertex_id }) = 0;
-  }
-  
-  int chosen = 0;
-  while (chosen < batch_size)
-  {
-    int vertex_id = rand() % num_vertices;
-    if (is_in_batch.At({ vertex_id }) == 0)
-    {
-      is_in_batch.At({ vertex_id }) = 1;
-      chosen++;      
-    }    
-  }
-  
+                   
   // Scalar data variables.
   int pred;
   int temp;
   int mean;
-  
-  // Short-form variable names
-  int V = num_vertices;
-  int F = feature_size;
-  int H = hidden_layer_size;
   
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   
   // The algorithm.
   for (int s = 0; s < V; s++)
   {
-    if (is_in_batch.At({ s }) == 1)
+    for (int b = 0; b < B; b++)
     {
-      // Look for n1 vertices.
-      for (int n1 = 0; n1 < V; n1++)
+      if (batch.At({ s, b }) == 1)
       {
-        if (is_connected.At({ s, n1 }) == 1)
+        // Look for n1 vertices.
+        for (int n1 = 0; n1 < V; n1++)
         {
-          if (is_in_neighbor_sample.At({ s, n1 }) == 1)
+          for (int n1_pos = 0; n1_pos < N; n1_pos++)
           {
-            // "Recurse" into n2 vertices.
-            for (int n2 = 0; n2 < V; n2++)
+            if (n1_sample.At({ s, b, n1, n1_pos }) == 1)
             {
-              if (is_connected.At({ n1, n2 }) == 1)
+              // "Recurse" into n2 vertices.
+              for (int n2 = 0; n2 < V; n2++)
               {
-                if (is_in_neighbor_sample.At({ n1, n2 }) == 1)
+                for (int n2_pos = 0; n2_pos < N; n2_pos++)
                 {
-                  for (int h = 0; h < H; h++)
+                  if (n2_sample.At({ s, b, n1, n1_pos, n2, n2_pos }) == 1)
                   {
-                    temp = 0;
-                    for (int f = 0; f < F; f++)
-                    {
-                      temp += (W_in.At({ h, f }) * features.At({ n2, f }));
-                    }
-                    // ReLU.
-                    if (temp < 0)
+                    for (int h = 0; h < H; h++)
                     {
                       temp = 0;
+                      for (int f = 0; f < F; f++)
+                      {
+                        temp += (W_in.At({ h, f }) * features.At({ n2, f }));
+                      }
+                      // ReLU.
+                      if (temp < 0)
+                      {
+                        temp = 0;
+                      }
+                      n1_sums.At({ s, b, n1, n1_pos, h }) += temp;
                     }
-                    n1_sums.At({ n1, h }) += temp;
+                    n1_count.At({ s, b, n1, n1_pos })++;
                   }
-                  n1_count.At({ n1 }) = n1_count.At({ n1 }) + 1;
                 }
               }
-            }
 
-            // Digest n1 vertices, rendezvous the results with those from n2 digestion above,
-            // and apply the W_1 NN layer.
-            for (int h = 0; h < H; h++)
-            {
-              temp = 0;
-              for (int f = 0; f < F; f++)
-              {
-                temp += (W_in.At({ h, f }) * features.At({ n1, f }));
-              }
-              // ReLU.
-              if (temp < 0)
+              // Digest n1 vertices, rendezvous the results with those from n2 digestion above,
+              // and apply the W_1 NN layer.
+              for (int h = 0; h < H; h++)
               {
                 temp = 0;
+                for (int f = 0; f < F; f++)
+                {
+                  temp += (W_in.At({ h, f }) * features.At({ n1, f }));
+                }
+                // ReLU.
+                if (temp < 0)
+                {
+                  temp = 0;
+                }
+                activation.At({ h }) = temp;
+                activation.At({ h+H }) = n1_sums.At({ s, b, n1, n1_pos, h }) /
+                  n1_count.At({ s, b, n1, n1_pos }); // mean of n2 results.
               }
-              activation.At({ h }) = temp;
-              activation.At({ h+H }) = n1_sums.At({ n1, h }) / n1_count.At({ n1 }); // mean of n2 results.
-            }
 
-            for (int h = 0; h < H; h++)
-            {
-              temp = 0;
-              for (int f = 0; f < 2*H; f++) // ** note! **
-              {
-                temp += (W_1.At({ h, f }) * activation.At({ f }));
-              }
-              temp += b_1.At({ h });
-              // ReLU.
-              if (temp < 0)
+              for (int h = 0; h < H; h++)
               {
                 temp = 0;
+                for (int f = 0; f < 2*H; f++) // ** note! **
+                {
+                  temp += (W_1.At({ h, f }) * activation.At({ f }));
+                }
+                temp += b_1.At({ h });
+                // ReLU.
+                if (temp < 0)
+                {
+                  temp = 0;
+                }
+                src_sums.At({ s, b, h }) += temp;
               }
-              src_sums.At({ s, h }) += temp;
+              src_count.At({ s, b })++;
             }
-            src_count.At({ s }) = src_count.At({ s }) + 1;
           }
         }
-      }
 
-      // // Calculate src means.
-      // for (int h = 0; h < H; h++)
-      // {
-      //   mean.At({ h] = src_sums.At({ s, h }) / src_count[s }); // mean of n2 results.
-      // }
+        // // Calculate src means.
+        // for (int h = 0; h < H; h++)
+        // {
+        //   mean.At({ h] = src_sums.At({ s, h }) / src_count[s }); // mean of n2 results.
+        // }
 
-      // Calculate final prediction.
-      pred = 0;
-      for (int h = 0; h < H; h++)
-      {
-        temp = 0;
-        for (int f = 0; f < H; f++) // ** note! **
-        {
-          mean = src_sums.At({ s, f }) / src_count.At({ s });
-          temp += (W_2.At({ h, f }) * mean);
-        }
-        temp += b_2.At({ h });
-        // ReLU.
-        if (temp < 0)
+        // Calculate final prediction.
+        pred = 0;
+        for (int h = 0; h < H; h++)
         {
           temp = 0;
+          for (int f = 0; f < H; f++) // ** note! **
+          {
+            mean = src_sums.At({ s, b, f }) / src_count.At({ s, b });
+            temp += (W_2.At({ h, f }) * mean);
+          }
+          temp += b_2.At({ h });
+          // ReLU.
+          if (temp < 0)
+          {
+            temp = 0;
+          }
+          pred += W_out.At({ h }) * temp;
         }
-        pred += W_out.At({ h }) * temp;
-      }
       
-      prediction.At({ s }) = pred;
+        prediction.At({ s, b }) = pred;
+      }
     }
   }
 
   whoop::T(0) << "DONE." << whoop::EndT;
 
-  for (int v = 0; v < num_vertices; v++)
+  for (int s = 0; s < V; s++)
   {
-    if (is_in_batch.At({ v }))
+    for (int b = 0; b < B; b++)
     {
-      whoop::T(3) << "prediction[" << v << "] = " << prediction.At({ v }) << whoop::EndT;
+      if (batch.At({ s, b }))
+      {
+        whoop::T(3) << "prediction[" << s << "][" << b << "] = " << prediction.At({ s, b }) << whoop::EndT;
+      }
     }
   }
   
