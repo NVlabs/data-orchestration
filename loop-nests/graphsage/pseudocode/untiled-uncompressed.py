@@ -24,8 +24,6 @@ bool  batch[V][B]
 bool  n1_sample[V][B][V][N]
 bool  n2_sample[V][B][V][N][V][N]
 
-bool  n1_dedup[V]
-bool  n2_dedup[V]
 float n1_sums[V][B][V][N][H]
 int   n1_count[V][B][V][N]
 float src_sums[V][B][H]
@@ -67,8 +65,8 @@ for s = [0..V):
                     for f = [0:F):
                       temp[h] += W_in[h][f] * value[n2][f]
                     encoded[h] = ReLU(temp[h])
-                    n1_sums[n1][h] += encoded[h]
-                  n1_count[n1]++
+                    n1_sums[s, b, n1, n1_pos][h] += encoded[h]
+                  n1_count[s, b, n1, n1_pos]++
 
             # Digest n1 vertices, rendezvous the results with those from n2 digestion above,
             # and apply the W_1 NN layer.
@@ -79,7 +77,7 @@ for s = [0..V):
 
             # Calculate n1 means.
             for h = [0:H):
-              mean[h] = n1_sums[n1][h] / n1_count[n1]
+              mean[h] = n1_sums[s, b, n1, n1_pos][h] / n1_count[s, b, n1, n1_pos]
 
             activation = concat(encoded, mean)
             for h = [0:H):
@@ -87,12 +85,12 @@ for s = [0..V):
                 temp[h] += W_1[h][f] * activation[f];
               temp[h] += b_1[h]
               hidden1[h] = ReLU(temp[h])
-              src_sums[s][h] += hidden1[h];
-            src_count[s]++;
+              src_sums[s, b][h] += hidden1[h];
+            src_count[s, b]++;
   
       # Calculate src means.
       for h = [0:H):
-        mean[h] = src_sums[s][h] / src_count[s]
+        mean[h] = src_sums[s, b][h] / src_count[s]
 
       for h = [0:H):
         for f = [0:H):
