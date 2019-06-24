@@ -18,11 +18,12 @@ N = 12  # neighbor samples per vertex
 # Inputs:
 float features[V][F]
 bool  is_connected[V, V]
+
+# Intermediate tensors:
 bool  batch[V][B]
 bool  n1_sample[V][B][V][N]
 bool  n2_sample[V][B][V][N][V][N]
 
-# Intermediate tensors:
 bool  n1_dedup[V]
 bool  n2_dedup[V]
 float n1_sums[V][B][V][N][H]
@@ -33,6 +34,21 @@ int   src_count[V][B]
 # Output:
 float prediction[V][B]
 
+# Pre-generate (in un-simulated code) batch, n1 and n2 samples.
+for b = [0..B):
+  s = rand() % V
+  batch[s, b] = true
+  
+  for n1_pos = [0..N):
+    n1_idx = rand() % num_neibs[s]
+    n1 = neib_lookup[n1_idx]
+    n1_sample[s, b, n1, n1_pos] = true
+    
+    for n2_pos = [0..N):
+      n2_idx = rand() % num_neibs[n1]
+      n2 = neib_lookup[n2_idx]
+      n2_sample[s, b, n1, n1_pos, n2, n2_pos] = true
+      
 # Previously, we were using a set of "parent" tensors to locate parent notes to propagate values to.
 # However, in this dense representation, we can simply reuse the n1_sample and n2_sample tensors.
 
@@ -58,7 +74,7 @@ float prediction[V][B]
 
 # Dedup n1 neighbors and prepare parent links.
 for s = [0..V]:
-  for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
+  for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
       for n1 = [0..V):        
         for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
@@ -68,7 +84,7 @@ for s = [0..V]:
 
 # Dedup n2 neighbors and prepare parent links.
 for s = [0..V):
-  for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
+  for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
       for n1 = [0..V):
         for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
@@ -90,7 +106,7 @@ for n2 = [0:V]:
     # I have an encoded value for each distinct n2. Now
     # propagate this value to whoever needed it.
     for s = [0..V]:
-      for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
+      for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
         if batch[s, b]:
           for n1 = [0..V):        
             for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
@@ -111,7 +127,7 @@ for n1 = [0:V]:
     # I have an encoded value for each distinct n1. Now
     # propagate this value to whoever needed it.
     for s = [0..V]:
-      for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
+      for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
         if batch[s, b]:
           for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
             # I'm now working with a unique (s,n1,n1_pos) tuple.
@@ -135,7 +151,7 @@ for n1 = [0:V]:
             
 # Final steps.
 for s = [0..V):
-  for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
+  for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
       
       # Calculate src means.
