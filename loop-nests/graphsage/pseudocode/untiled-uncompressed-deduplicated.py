@@ -1,4 +1,4 @@
-############### -- Union-optimized pipelined version -- ##############
+############### -- De-duplicated pipelined version -- ##############
 
 # Parameters:
 V = 1M  # number of vertices
@@ -7,9 +7,18 @@ H = 64  # hidden layer size
 B = 256 # batch size
 N = 12  # neighbor samples per vertex
 
+# A coordinate-tensor of size [X] in the compressed space is represented as a boolean
+# tensor of size [V][X] in the uncompressed space. The boolean (v, x) tells us whether
+# v was present in the x-th position in the vector [X]. This representation allows for
+# duplicate entries in the [X] vector.
+
+# Similarly. a coordinate-tensor of size [X][Y] in the compressed space is represented
+# as a boolean tensor of size [V][X][V][Y] in the uncompressed space.
+
 # Inputs:
 float features[V][F]
 bool  is_connected[V, V]
+bool  batch[V][B]
 bool  n1_sample[V][B][V][N]
 bool  n2_sample[V][B][V][N][V][N]
 
@@ -23,18 +32,6 @@ int   src_count[V][B]
 
 # Output:
 float prediction[V][B]
-
-# A coordinate-tensor of size [X] in the compressed space is represented as a boolean
-# tensor of size [V][X] in the uncompressed space. The boolean (v, x) tells us whether
-# v was present in the x-th position in the vector [X]. This representation allows for
-# duplicate entries in the [X] vector.
-
-# Similarly. a coordinate-tensor of size [X][Y] in the compressed space is represented
-# as a boolean tensor of size [V][X][V][Y] in the uncompressed space.
-
-batch: bool [1M][256]
-n1_sample: bool [1M][256][1M][12]
-n2_sample: bool [1M][256][1M][12][1M][12]
 
 # Previously, we were using a set of "parent" tensors to locate parent notes to propagate values to.
 # However, in this dense representation, we can simply reuse the n1_sample and n2_sample tensors.
@@ -64,7 +61,7 @@ for s = [0..V]:
   for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
       for n1 = [0..V):        
-        for n1_pos = [0..N): # N = 12. n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
+        for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
           if n1_sample[s, b, n1, n1_pos]:
             n1_dedup[n1] = true
             n1_parent[n1, b, s]++
@@ -74,10 +71,10 @@ for s = [0..V):
   for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
       for n1 = [0..V):
-        for n1_pos = [0..N): # N = 12. n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
+        for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
           if n1_sample[s, b, n1, n1_pos]:
             for n2 = [0..N):
-              for n2_pos = [0..N): # N = 12. n2_pos identifies which of the 12 positions in n1's neighbor-sample vector n2 belongs to.      
+              for n2_pos = [0..N): # n2_pos identifies which of the 12 positions in n1's neighbor-sample vector n2 belongs to.      
                 if n2_sample[s, b, n1, n1_pos, n2, n2_pos]:
                   n2_dedup[n2] = true
                   n2_parent[n2, n1_pos, n1]++
@@ -96,7 +93,7 @@ for n2 = [0:V]:
       for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
         if batch[s, b]:
           for n1 = [0..V):        
-            for n1_pos = [0..N): # N = 12. n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
+            for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
               if n1_sample[s, b, n1, n1_pos]:
                 for h = [0:H):
                   n1_sums[s, b, n1, n1_pos][h] += encoded[h];  # Multiple potential contributions from same child.
@@ -116,7 +113,7 @@ for n1 = [0:V]:
     for s = [0..V]:
       for b = [0..B): # B = 256. b identifies which of the 256 positions in the batch 's' belongs to.
         if batch[s, b]:
-          for n1_pos = [0..N): # N = 12. n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
+          for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
             # I'm now working with a unique (s,n1,n1_pos) tuple.
 
             # Calculate n1 means.
