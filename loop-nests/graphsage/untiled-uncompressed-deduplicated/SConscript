@@ -26,14 +26,9 @@
 
 Import('env')
 
-subdirs = [
-           'reference-uncompressed',
-           'untiled-uncompressed',
-           'untiled-uncompressed-deduplicated',
-          ]
+sources = Split("""
+graphsage.cpp
+""")
 
-disabled = []
-
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+env.Program(target = 'graphsage.bin', source = sources)
 
