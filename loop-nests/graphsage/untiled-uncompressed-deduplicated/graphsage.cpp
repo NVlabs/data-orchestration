@@ -50,10 +50,13 @@ int main(int argc, char** argv)
   Tensor batch("batch");
   Tensor n1_sample("n1_sample");
   Tensor n2_sample("n2_sample");
-  
+
+  Tensor n1_dedup("n1_dedup");
+  Tensor n2_dedup("n2_dedup");
   Tensor n1_sums("n1_sums"), n1_count("n1_count");
   Tensor src_sums("src_sums"), src_count("src_count");
   Tensor activation("activation");
+  Tensor encoded("encoded");
 
   // Un-simulated tensors.
   Tensor adj_lookup("adj_lookup");
@@ -91,13 +94,16 @@ int main(int argc, char** argv)
   batch.Resize({ V, B });
   n1_sample.Resize({ V, B, V, N });
   n2_sample.Resize({ V, B, V, N, V, N });
-  
+
+  n1_dedup.Resize({ V });
+  n2_dedup.Resize({ V });
   n1_sums.Resize({ V, B, V, N, H });
   n1_count.Resize({ V, B, V, N });
   src_sums.Resize({ V, B, H });
   src_count.Resize({ V, B });
   
   activation.Resize({ 2*H });
+  encoded.Resize({ H });
 
   adj_lookup.Resize({ V, V });
   adj_count.Resize({ V });  
@@ -151,137 +157,176 @@ int main(int argc, char** argv)
   Var pred("pred");
   Var temp("temp");
   Var mean("mean");
-  
+
+  //
   // The algorithm.
-  t_for(s, 0, V);
-  {
-    t_for(b, 0, B);
-    {
-      w_if(batch[s][b] == 1);
-      {
-        // Look for n1 vertices.
-        t_for(n1, 0, V);
-        {
-          t_for(n1_pos, 0, N);
-          {
-            w_if(n1_sample[s][b][n1][n1_pos] == 1);
-            {
-              // "Recurse" into n2 vertices.
-              t_for(n2, 0, V);
-              {
-                t_for(n2_pos, 0, N);
-                {
-                  w_if(n2_sample[s][b][n1][n1_pos][n2][n2_pos] == 1);
-                  {
-                    t_for(h, 0, H);
-                    {
-                      temp = 0;
-                      t_for(f, 0, F);
-                      {
-                        temp += (W_in[h][f] * features[n2][f]);
-                      }
-                      end(); // t_for(f, 0, F);
-                      // ReLU.
-                      w_if(temp < 0);
-                      {
-                        temp = 0;
-                      }
-                      end();
-                      n1_sums[s][b][n1][n1_pos][h] += temp;
-                    }
-                    end(); // t_for(h, 0, H);
-                    n1_count[s][b][n1][n1_pos] += 1;
-                  }
-                  end(); // w_if(n2_sample[s][b][n1][n1_pos][n2][n2_pos] == 1);
-                }
-                end(); // t_for(n2_pos, 0, N);
-              }
-              end(); // t_for(n2, 0, V);
+  //
 
-              // Digest n1 vertices, rendezvous the results with those from n2 digestion above,
-              // and apply the W_1 NN layer.
-              t_for(h, 0, H);
-              {
-                temp = 0;
-                t_for(f, 0, F);
-                {
-                  temp += (W_in[h][f] * features[n1][f]);
-                }
-                end(); // t_for(f, 0, F);
-                // ReLU.
-                w_if(temp < 0);
-                {
+  // Dedup n1 neighbors (no parent links required).
+  t_for(s, 0, V); {
+    t_for(b, 0, B); {
+      w_if(batch[s][b] == 1); {
+        t_for(n1, 0, V); {
+          t_for(n1_pos, 0, N); {
+            w_if(n1_sample[s][b][n1][n1_pos] == 1); {
+              
+              n1_dedup[n1] = 1;
+              
+            } end();
+          } end();
+        } end();
+      } end();
+    } end();
+  } end();
+  
+  // Dedup n2 neighbors (no parent links required).
+  // We could have inlined this with the n1 dedup nest above.
+  t_for(s, 0, V); {
+    t_for(b, 0, B); {
+      w_if(batch[s][b] == 1); {
+        t_for(n1, 0, V); {
+          t_for(n1_pos, 0, N); {
+            w_if(n1_sample[s][b][n1][n1_pos] == 1); {
+              t_for(n2, 0, V); {
+                t_for(n2_pos, 0, N); {
+                  w_if(n2_sample[s][b][n1][n1_pos][n2][n2_pos] == 1); {
+
+                    n2_dedup[n2] = 1;
+                    
+                  } end();
+                } end();
+              } end();
+            } end();
+          } end();
+        } end();
+      } end();
+    } end();
+  } end();
+
+  // Digest n2 vertices.
+  t_for(n2, 0, V); {
+    w_if(n2_dedup[n2] == 1); {
+      
+      // Encode each unique n2 vertex.
+      t_for(h, 0, H); {
+        temp = 0;
+        t_for(f, 0, F); {
+          temp += (W_in[h][f] * features[n2][f]);
+        } end();
+        w_if(temp < 0); {
+          temp = 0; // ReLU.
+        } end();
+        encoded[h] = temp;
+      } end();
+
+      // I have an encoded value for each distinct n2. Now
+      // propagate this value to whoever needed it.
+      t_for(s, 0, V); {
+        t_for(b, 0, B); {
+          w_if(batch[s][b] == 1); {
+            t_for(n1, 0, V); {
+              t_for(n1_pos, 0, N); {
+                w_if(n1_sample[s][b][n1][n1_pos] == 1); {
+                  t_for(n2_pos, 0, N); {
+                    w_if(n2_sample[s][b][n1][n1_pos][n2][n2_pos] == 1); {
+                      
+                      t_for(h, 0, H); {
+                        n1_sums[s][b][n1][n1_pos][h] += encoded[h];
+                      } end();
+                      n1_count[s][b][n1][n1_pos] += 1;
+                      
+                    } end();
+                  } end();
+                } end();
+              } end();
+            } end();
+          } end();
+        } end();
+      } end();
+    } end();
+  } end();
+   
+  // Digest n1 vertices, rendezvous the results with those from n2 digestion above,
+  // and apply the W_1 NN layer.
+  t_for(n1, 0, V); {
+    w_if(n1_dedup[n1] == 1); {
+
+      // Encode each unique n1 vertex.
+      t_for(h, 0, H); {
+        temp = 0;
+        t_for(f, 0, F); {
+          temp += (W_in[h][f] * features[n1][f]);
+        } end();
+        w_if(temp < 0); {
+          temp = 0; // ReLU.
+        } end();
+        encoded[h] = temp;
+      } end();
+
+      // I have an encoded value for each distinct n1. Now
+      // propagate this value to whoever needed it.
+      t_for(s, 0, V); {
+        t_for(b, 0, B); {
+          w_if(batch[s][b] == 1); {
+            t_for(n1_pos, 0, N); {
+              w_if(n1_sample[s][b][n1][n1_pos] == 1); {
+
+                // Calculate n1 means and concatenate with encoded n1s.
+                t_for(h, 0, H); {
+                  activation[h] = encoded[h];
+                  activation[h+H] = n1_sums[s][b][n1][n1_pos][h] /
+                    n1_count[s][b][n1][n1_pos];
+                } end();
+
+                // Apply the W_1 NN layer.
+                t_for(h, 0, H); {
                   temp = 0;
-                }
-                end();
-                activation[h] = temp;
-                activation[h+H] = n1_sums[s][b][n1][n1_pos][h] /
-                  n1_count[s][b][n1][n1_pos]; // mean of n2 results.
-              }
-              end(); // t_for(h, 0, H);
+                  t_for(f, 0, 2*H); { // ** note! **
+                    temp += (W_1[h][f] * activation[f]);
+                  } end();
+                  temp += b_1[h];                  
+                  w_if(temp < 0); {
+                    temp = 0; // ReLU.
+                  } end();
+                  // Propagate to src_sums.
+                  src_sums[s][b][h] += temp;
+                } end();
+                src_count[s][b] += 1;
+                
+              } end();
+            } end();
+          } end();
+        } end();
+      } end();
+    } end();
+  } end();
 
-              t_for(h, 0, H);
-              {
-                temp = 0;
-                t_for(f, 0, 2*H); // ** note! **
-                {
-                  temp += (W_1[h][f] * activation[f]);
-                }
-                end(); // t_for(f, 0, 2H);
-                temp += b_1[h];
-                // ReLU.
-                w_if(temp < 0);
-                {
-                  temp = 0;
-                }
-                end();
-                src_sums[s][b][h] += temp;
-              }
-              end(); // t_for(h, 0, H);
-              src_count[s][b] += 1;
-            }
-            end(); // w_if(n1_sample[s][b][n1][n1_pos] == 1);
-          }
-          end(); // t_for(n1_pos, 0, N);
-        }
-        end(); // t_for(n1, 0, V);
-
-        // // Calculate src means.
-        // t_for(h, 0, H);
-        // {
-        //   mean[h] = src_sums[s][h] / src_count[s]; // mean of n2 results.
-        // }
-        // end(); // t_for(h, 0, H);
+  // Final steps.
+  t_for(s, 0, V); {
+    t_for(b, 0, B); {
+      w_if(batch[s][b] == 1); {
 
         // Calculate final prediction.
         pred = 0;
-        t_for(h, 0, H);
-        {
+        t_for(h, 0, H); {
           temp = 0;
-          t_for(f, 0, H); // ** note! **
-          {
+          t_for(f, 0, H); { // ** note! **
             mean = src_sums[s][b][f] / src_count[s][b];
             temp += (W_2[h][f] * mean);
-          }
-          end(); // t_for(f, 0, H);
+          } end();
           temp += b_2[h];
-          // ReLU.
-          w_if(temp < 0);
-          {
-            temp = 0;
-          }
-          end();
+          w_if(temp < 0); {
+            temp = 0; // ReLU.
+          } end();
           pred += W_out[h] * temp;
-        }
-        end(); // t_for(h, 0, H);
-      
+        } end();
+
+        // This is it.
         prediction[s][b] = pred;
-      }
-      end(); // w_if(batch[s][b] == 1);
-    }
-    end(); // t_for(b, 0, B);
-  }
-  end(); // t_for(s, 0, V);
+        
+      } end();
+    } end();
+  } end();
 
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();

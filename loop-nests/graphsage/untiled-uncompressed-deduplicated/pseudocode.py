@@ -52,27 +52,11 @@ for b = [0..B):
 # Previously, we were using a set of "parent" tensors to locate parent notes to propagate values to.
 # However, in this dense representation, we can simply reuse the n1_sample and n2_sample tensors.
 
-# for s = [0..V]:
-#   if in_batch[s]:
-#     random_sample[0..V) = []
-#     for r = [0..12]:
-#       x = rand() % |is_connected[s]|
-#       random_sample[x]++
-
-# for s = [0..V):
-#   if n1_dedup[s]:
-#     for p = [0..V): # Re-sample for each parent(src) connecting to me.
-#       for n = [0..n1_parent[s, p]): # "
-#         random_sample[0..V) = []
-#         for r = [0..12):
-#           x = rand() % |is_connected[s]|
-#           random_sample[x]++
-
 # To meet the target accuracy, we can only use deduplication to avoid redundant
 # feature fetches + W_in computation. Everything else will need to allow
 # redundancy.
 
-# Dedup n1 neighbors and prepare parent links.
+# Dedup n1 neighbors (no parent links required).
 for s = [0..V]:
   for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
@@ -80,9 +64,9 @@ for s = [0..V]:
         for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
           if n1_sample[s, b, n1, n1_pos]:
             n1_dedup[n1] = true
-            n1_parent[n1, b, s]++
 
-# Dedup n2 neighbors and prepare parent links.
+# Dedup n2 neighbors (no parent links required).
+# We could have inlined this with the n1 dedup nest above.
 for s = [0..V):
   for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
     if batch[s, b]:
@@ -93,11 +77,12 @@ for s = [0..V):
               for n2_pos = [0..N): # n2_pos identifies which of the 12 positions in n1's neighbor-sample vector n2 belongs to.      
                 if n2_sample[s, b, n1, n1_pos, n2, n2_pos]:
                   n2_dedup[n2] = true
-                  n2_parent[n2, n1_pos, n1]++
 
 # Digest n2 vertices.
 for n2 = [0:V]:
   if n2_dedup[n2]:
+    
+    # Encode each unique n2 vertex.
     for h = [0:H):
       for f = [0:F):
         temp[h] += W_in[h][f] * features[n2][f];
@@ -111,14 +96,18 @@ for n2 = [0:V]:
           for n1 = [0..V):        
             for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
               if n1_sample[s, b, n1, n1_pos]:
-                for h = [0:H):
-                  n1_sums[s, b, n1, n1_pos][h] += encoded[h];  # Multiple potential contributions from same child.
-                n1_count[s, b, n1, n1_pos]++;
+                for n2_pos = [0..N):
+                  if n2_sample[s, b, n1, n1_pos, n2, n2_pos]:
+                    for h = [0:H):
+                      n1_sums[s, b, n1, n1_pos][h] += encoded[h];  # Multiple potential contributions from same child.
+                    n1_count[s, b, n1, n1_pos]++;
 
 # Digest n1 vertices, rendezvous the results with those from n2 digestion above,
 # and apply the W_1 NN layer.
 for n1 = [0:V]:
   if n1_dedup[n1]:
+
+    # Encode each unique n1 vertex.
     for h = [0:H):
       for f = [0:F):
         temp[h] += W_in[h][f] * features[n1][f];
@@ -129,25 +118,25 @@ for n1 = [0:V]:
     for s = [0..V]:
       for b = [0..B): # b identifies which of the 256 positions in the batch 's' belongs to.
         if batch[s, b]:
-          for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.      
-            # I'm now working with a unique (s,n1,n1_pos) tuple.
+          for n1_pos = [0..N): # n1_pos identifies which of the 12 positions in s's neighbor-sample vector n1 belongs to.
+            if n1_sample[s, b, n1, n1_pos]:
 
-            # Calculate n1 means.
-            for h = [0:H):
-              mean[h] = n1_sums[s, b, n1, n1_pos][h] / n1_count[s, b, n1, n1_pos]
+              # Calculate n1 means.
+              for h = [0:H):
+                mean[h] = n1_sums[s, b, n1, n1_pos][h] / n1_count[s, b, n1, n1_pos]
 
-            # Concatenate and apply the next NN layer.
-            activation = concat(encoded, mean)
-            for h = [0:H):
-              for f = [0:2*H):
-                temp[h] += W_1[h][f] * activation[f];
-              temp[h] += b_1[h]
-              hidden1[h] = ReLU(temp[h])
+              # Concatenate and apply the W_1 NN layer.
+              activation = concat(encoded, mean)
+              for h = [0:H):
+                for f = [0:2*H):
+                  temp[h] += W_1[h][f] * activation[f];
+                temp[h] += b_1[h]
+                hidden1[h] = ReLU(temp[h])
 
-            # Propagate the results to src_sums.
-            for h = [0:H):
-              src_sums[s, b][h] += hidden1[h]
-            src_count[s, b]++
+              # Propagate the results to src_sums.
+              for h = [0:H):
+                src_sums[s, b][h] += hidden1[h]
+              src_count[s, b]++
             
 # Final steps.
 for s = [0..V):
