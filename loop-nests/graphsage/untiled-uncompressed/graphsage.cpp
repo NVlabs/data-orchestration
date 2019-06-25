@@ -35,7 +35,6 @@ int main(int argc, char** argv)
 
   // Input graph.
   TensorIn is_connected("adj_matrix");
-  TensorIn is_in_neighbor_sample("neib_sample");
   TensorIn features("features");
 
   // Trained model.
@@ -48,10 +47,17 @@ int main(int argc, char** argv)
   TensorOut prediction("prediction");
 
   // Intermediate tensors.
-  Tensor is_in_batch("batch");
+  Tensor batch("batch");
+  Tensor n1_sample("n1_sample");
+  Tensor n2_sample("n2_sample");
+  
   Tensor n1_sums("n1_sums"), n1_count("n1_count");
   Tensor src_sums("src_sums"), src_count("src_count");
   Tensor activation("activation");
+
+  // Un-simulated tensors.
+  Tensor adj_lookup("adj_lookup");
+  Tensor adj_count("adj_count");
 
   // Init.
   whoop::Init(argc, argv);
@@ -62,63 +68,82 @@ int main(int argc, char** argv)
   int hidden_layer_size = W_in.Size(1);
   
   int batch_size = 8;
+  int num_sampled_neighbors = 3;
 
-  assert(is_connected.Size(1) == num_vertices);
-  assert(features.Size(1) == num_vertices);
-  assert(W_in.Size(0) == feature_size);
-  assert(W_1.Size(0) == 2*hidden_layer_size && W_1.Size(1) == hidden_layer_size);
-  assert(b_1.Size(0) == hidden_layer_size);
-  assert(W_2.Size(0) == hidden_layer_size && W_2.Size(1) == hidden_layer_size);
-  assert(b_2.Size(0) == hidden_layer_size);
-  assert(W_out.Size(0) == hidden_layer_size);
+  // Short-form variable names
+  int V = num_vertices;
+  int F = feature_size;
+  int B = batch_size;
+  int H = hidden_layer_size;
+  int N = num_sampled_neighbors;
+
+  assert(is_connected.Size(1) == V);
+  assert(features.Size(1) == V);
+  assert(W_in.Size(0) == F);
+  assert(W_1.Size(0) == 2*H && W_1.Size(1) == H);
+  assert(b_1.Size(0) == H);
+  assert(W_2.Size(0) == H && W_2.Size(1) == H);
+  assert(b_2.Size(0) == H);
+  assert(W_out.Size(0) == H);
   
-  prediction.Resize({ num_vertices });
-  is_in_batch.Resize({ num_vertices });
-  n1_sums.Resize({ num_vertices, hidden_layer_size });
-  n1_count.Resize({ num_vertices });
-  src_sums.Resize({ num_vertices, hidden_layer_size });
-  src_count.Resize({ num_vertices });
-  activation.Resize({ 2*hidden_layer_size });
+  prediction.Resize({ V, B });
   
-  for (int vertex_id = 0; vertex_id < num_vertices; vertex_id++)
+  batch.Resize({ V, B });
+  n1_sample.Resize({ V, B, V, N });
+  n2_sample.Resize({ V, B, V, N, V, N });
+  
+  n1_sums.Resize({ V, B, V, N, H });
+  n1_count.Resize({ V, B, V, N });
+  src_sums.Resize({ V, B, H });
+  src_count.Resize({ V, B });
+  
+  activation.Resize({ 2*H });
+
+  adj_lookup.Resize({ V, V });
+  adj_count.Resize({ V });  
+  
+  // Pre-generate some useful graph meta-data (essentially an adjacency list).
+  for (int s = 0; s < V; s++)
   {
-    is_in_batch.At({ vertex_id }) = 0;
-    n1_count.At({ vertex_id }) = 0;
-    src_count.At({ vertex_id }) = 0;    
-    for (int h = 0; h < hidden_layer_size; h++)
+    int count = 0;
+    for (int d = 0; d < V; d++)
     {
-      n1_sums.At({ vertex_id, h }) = 0;
+      if (is_connected.At({ s, d }) == 1)
+      {
+        adj_lookup.At({ s, count++ }) = d;
+      }
     }
+    adj_count.At({ s }) = count;
   }
 
-  for (int h = 0; h < 2*hidden_layer_size; h++)
+  // Pre-generate (in un-simulated code) batch, n1 and n2 samples.
+  for (int b = 0; b < B; b++)
   {
-    activation.At({ h }) = 0;
-  }
-  
-  // Choose random nodes to place in batch.
+    int s = rand() % V;
+    batch.At({ s, b }) = 1;
 
-  for (int vertex_id = 0; vertex_id < num_vertices; vertex_id++)
-  {
-    is_in_batch.At({ vertex_id }) = 0;
-  }
-  
-  int chosen = 0;
-  while (chosen < batch_size)
-  {
-    int vertex_id = rand() % num_vertices;
-    if (is_in_batch.At({ vertex_id }) == 0)
+    for (int n1_pos = 0; n1_pos < N; n1_pos++)
     {
-      is_in_batch.At({ vertex_id }) = 1;
-      chosen++;      
-    }    
+      int n1_idx = rand() % adj_count.At({ s });
+      int n1 = adj_lookup.At({ s, n1_idx });
+      n1_sample.At({ s, b, n1, n1_pos }) = 1;
+
+      for (int n2_pos = 0; n2_pos < N; n2_pos++)
+      {
+        int n2_idx = rand() % adj_count.At({ n1 });
+        int n2 = adj_lookup.At({ n1, n2_idx });
+        n2_sample.At({ s, b, n1, n1_pos, n2, n2_pos }) = 1;
+      }
+    }
   }
   
   // Iteration indices.
   Var s("s");
-  Var d("d");
+  Var b("b");
   Var n1("n1");
+  Var n1_pos("n1_pos");
   Var n2("n2");
+  Var n2_pos("n2_pos");
   Var h("h");
   Var f("f");
 
@@ -127,134 +152,134 @@ int main(int argc, char** argv)
   Var temp("temp");
   Var mean("mean");
   
-  // Short-form variable names
-  int V = num_vertices;
-  int F = feature_size;
-  int H = hidden_layer_size;
-  
   // The algorithm.
   t_for(s, 0, V);
   {
-    w_if(is_in_batch[s] == 1);
+    t_for(b, 0, B);
     {
-      // Look for n1 vertices.
-      t_for(n1, 0, V);
+      w_if(batch[s][b] == 1);
       {
-        w_if(is_connected[s][n1] == 1);
+        // Look for n1 vertices.
+        t_for(n1, 0, V);
         {
-          w_if(is_in_neighbor_sample[s][n1] == 1);
+          t_for(n1_pos, 0, N);
           {
-            // "Recurse" into n2 vertices.
-            t_for(n2, 0, V);
+            w_if(n1_sample[s][b][n1][n1_pos] == 1);
             {
-              w_if(is_connected[n1][n2] == 1);
+              // "Recurse" into n2 vertices.
+              t_for(n2, 0, V);
               {
-                w_if(is_in_neighbor_sample[n1][n2] == 1);
+                t_for(n2_pos, 0, N);
                 {
-                  t_for(h, 0, H);
+                  w_if(n2_sample[s][b][n1][n1_pos][n2][n2_pos] == 1);
                   {
-                    temp = 0;
-                    t_for(f, 0, F);
-                    {
-                      temp += (W_in[h][f] * features[n2][f]);
-                    }
-                    end(); // t_for(f, 0, F);
-                    // ReLU.
-                    w_if(temp < 0);
+                    t_for(h, 0, H);
                     {
                       temp = 0;
+                      t_for(f, 0, F);
+                      {
+                        temp += (W_in[h][f] * features[n2][f]);
+                      }
+                      end(); // t_for(f, 0, F);
+                      // ReLU.
+                      w_if(temp < 0);
+                      {
+                        temp = 0;
+                      }
+                      end();
+                      n1_sums[s][b][n1][n1_pos][h] += temp;
                     }
-                    end();
-                    n1_sums[n1][h] += temp;
+                    end(); // t_for(h, 0, H);
+                    n1_count[s][b][n1][n1_pos] += 1;
                   }
-                  end(); // t_for(h, 0, H);
-                  n1_count[n1] = n1_count[n1] + 1;
+                  end(); // w_if(n2_sample[s][b][n1][n1_pos][n2][n2_pos] == 1);
                 }
-                end(); // w_if(is_in_neighbor_sample[n1][n2] == 1);
+                end(); // t_for(n2_pos, 0, N);
               }
-              end(); // w_if(is_connected[n1][n2]);
-            }
-            end(); // t_for(n2, 0, V);
+              end(); // t_for(n2, 0, V);
 
-            // Digest n1 vertices, rendezvous the results with those from n2 digestion above,
-            // and apply the W_1 NN layer.
-            t_for(h, 0, H);
-            {
-              temp = 0;
-              t_for(f, 0, F);
-              {
-                temp += (W_in[h][f] * features[n1][f]);
-              }
-              end(); // t_for(f, 0, F);
-              // ReLU.
-              w_if(temp < 0);
+              // Digest n1 vertices, rendezvous the results with those from n2 digestion above,
+              // and apply the W_1 NN layer.
+              t_for(h, 0, H);
               {
                 temp = 0;
+                t_for(f, 0, F);
+                {
+                  temp += (W_in[h][f] * features[n1][f]);
+                }
+                end(); // t_for(f, 0, F);
+                // ReLU.
+                w_if(temp < 0);
+                {
+                  temp = 0;
+                }
+                end();
+                activation[h] = temp;
+                activation[h+H] = n1_sums[s][b][n1][n1_pos][h] /
+                  n1_count[s][b][n1][n1_pos]; // mean of n2 results.
               }
-              end();
-              activation[h] = temp;
-              activation[h+H] = n1_sums[n1][h] / n1_count[n1]; // mean of n2 results.
-            }
-            end(); // t_for(h, 0, H);
+              end(); // t_for(h, 0, H);
 
-            t_for(h, 0, H);
-            {
-              temp = 0;
-              t_for(f, 0, 2*H); // ** note! **
-              {
-                temp += (W_1[h][f] * activation[f]);
-              }
-              end(); // t_for(f, 0, 2H);
-              temp += b_1[h];
-              // ReLU.
-              w_if(temp < 0);
+              t_for(h, 0, H);
               {
                 temp = 0;
+                t_for(f, 0, 2*H); // ** note! **
+                {
+                  temp += (W_1[h][f] * activation[f]);
+                }
+                end(); // t_for(f, 0, 2H);
+                temp += b_1[h];
+                // ReLU.
+                w_if(temp < 0);
+                {
+                  temp = 0;
+                }
+                end();
+                src_sums[s][b][h] += temp;
               }
-              end();
-              src_sums[s][h] += temp;
+              end(); // t_for(h, 0, H);
+              src_count[s][b] += 1;
             }
-            end(); // t_for(h, 0, H);
-            src_count[s] = src_count[s] + 1;
+            end(); // w_if(n1_sample[s][b][n1][n1_pos] == 1);
           }
-          end(); // w_if(is_in_neighbor_sample[s][n1] == 1);
+          end(); // t_for(n1_pos, 0, N);
         }
-        end(); // w_if(is_connected[s][n1] == 1);
-      }
-      end(); // t_for(n1, 0, V);
+        end(); // t_for(n1, 0, V);
 
-      // // Calculate src means.
-      // t_for(h, 0, H);
-      // {
-      //   mean[h] = src_sums[s][h] / src_count[s]; // mean of n2 results.
-      // }
-      // end(); // t_for(h, 0, H);
+        // // Calculate src means.
+        // t_for(h, 0, H);
+        // {
+        //   mean[h] = src_sums[s][h] / src_count[s]; // mean of n2 results.
+        // }
+        // end(); // t_for(h, 0, H);
 
-      // Calculate final prediction.
-      pred = 0;
-      t_for(h, 0, H);
-      {
-        temp = 0;
-        t_for(f, 0, H); // ** note! **
-        {
-          mean = src_sums[s][f] / src_count[s];
-          temp += (W_2[h][f] * mean);
-        }
-        end(); // t_for(f, 0, H);
-        temp += b_2[h];
-        // ReLU.
-        w_if(temp < 0);
+        // Calculate final prediction.
+        pred = 0;
+        t_for(h, 0, H);
         {
           temp = 0;
+          t_for(f, 0, H); // ** note! **
+          {
+            mean = src_sums[s][b][f] / src_count[s][b];
+            temp += (W_2[h][f] * mean);
+          }
+          end(); // t_for(f, 0, H);
+          temp += b_2[h];
+          // ReLU.
+          w_if(temp < 0);
+          {
+            temp = 0;
+          }
+          end();
+          pred += W_out[h] * temp;
         }
-        end();
-        pred += W_out[h] * temp;
-      }
-      end(); // t_for(h, 0, H);
+        end(); // t_for(h, 0, H);
       
-      prediction[s] = pred;
+        prediction[s][b] = pred;
+      }
+      end(); // w_if(batch[s][b] == 1);
     }
-    end(); // w_if(is_in_batch[s]);
+    end(); // t_for(b, 0, B);
   }
   end(); // t_for(s, 0, V);
 
@@ -262,13 +287,16 @@ int main(int argc, char** argv)
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
 
-  for (int v = 0; v < num_vertices; v++)
+  for (int s = 0; s < V; s++)
   {
-    if (is_in_batch.At({ v }))
+    for (int b = 0; b < B; b++)
     {
-      whoop::T(3) << "prediction[" << v << "] = " << prediction.At({ v }) << whoop::EndT;
+      if (batch.At({ s, b }))
+      {
+        whoop::T(3) << "prediction[" << s << "][" << b << "] = " << prediction.At({ s, b }) << whoop::EndT;
+      }
     }
   }
-  
+    
   whoop::Done();
 }

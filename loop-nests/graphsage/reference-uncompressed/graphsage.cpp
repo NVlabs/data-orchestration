@@ -102,22 +102,6 @@ int main(int argc, char** argv)
   adj_lookup.Resize({ V, V });
   adj_count.Resize({ V });
   
-  // for (int vertex_id = 0; vertex_id < V; vertex_id++)
-  // {
-  //   batch.At({ vertex_id }) = 0;
-  //   n1_count.At({ vertex_id }) = 0;
-  //   src_count.At({ vertex_id }) = 0;    
-  //   for (int h = 0; h < H; h++)
-  //   {
-  //     n1_sums.At({ vertex_id, h }) = 0;
-  //   }
-  // }
-
-  // for (int h = 0; h < 2*H; h++)
-  // {
-  //   activation.At({ h }) = 0;
-  // }
-
   // Pre-generate some useful graph meta-data (essentially an adjacency list).
   for (int s = 0; s < V; s++)
   {
