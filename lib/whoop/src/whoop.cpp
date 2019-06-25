@@ -38,8 +38,8 @@ namespace whoop
 Program the_program{};
 StatsCollection top_stats{"top"};
 std::deque<int> spatial_partition_levels{};
-std::vector<std::deque<int>> tile_level_deliminators{};
-std::vector<int> current_tile_level{};
+std::vector<std::vector<std::deque<int>>> tile_level_deliminators{};
+std::vector<std::vector<int>> current_tile_level{};
 int max_tile_level = 0;
 std::deque<int> global_tile_level_deliminators{};
 int current_global_tile_level = 0;
@@ -260,12 +260,15 @@ void end()
   // Check if this end() matches up with an AddTileLevel for any tensor.
   for (int x = 0; x < all_tensors.size(); x++)
   {
-    if (tile_level_deliminators[x].size() > 0)
+    for (int p = 0; p < tile_level_deliminators[x].size(); p++)
     {
-      if (spatial_partition_levels.size() == tile_level_deliminators[x].back())
+      if (tile_level_deliminators[x][p].size() > 0)
       {
-        tile_level_deliminators[x].pop_back();
-        current_tile_level[x]--;
+        if (spatial_partition_levels.size() == tile_level_deliminators[x][p].back())
+        {
+          tile_level_deliminators[x][p].pop_back();
+          current_tile_level[x][p]--;
+        }
       }
     }
   }

@@ -28,7 +28,7 @@
 # Stop on errors
 set -e
 # build the executable
-scons -u -Q
+scons -u -Q debug=1
 
 executable=./pagerank-nibble-dense-src-stationary.bin
 

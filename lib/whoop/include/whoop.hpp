@@ -204,8 +204,9 @@ extern std::deque<int> spatial_partition_levels;
 // Global variable to hold the current tile level for each tensor,
 // as well as the current spatial_partition_level where that level was added.
 // This info is used to pop this stack in end();
-extern std::vector<std::deque<int>> tile_level_deliminators;
-extern std::vector<int> current_tile_level;
+// Note: Tracks separate levels per tensor, per port.
+extern std::vector<std::vector<std::deque<int>>> tile_level_deliminators;
+extern std::vector<std::vector<int>> current_tile_level;
 // Record the maximum value that has ever been present in current_tile_level.
 extern int max_tile_level;
 // Not all tensors add all tile levels. This increments/decrements globally.
@@ -595,13 +596,14 @@ class Tensor : public ast::PrimTensor
     std::shared_ptr<buff::BufferModel> offchip(new buff::OffChipBufferModel("offchip_" + name_, vals_.size()));
     std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>> 
         offchip_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, offchip));
+    // Set up tile-level tracking state.
+    id_ = all_tensors.size();
+    tile_level_deliminators.push_back(std::vector<std::deque<int>>());
+    current_tile_level.push_back(std::vector({0}));
+    all_tensors.push_back(this);
     // Add port 0, and add the offchip buffer to it.
     AddPort();
     buffer_levels_[0]->push_back(offchip_vec);
-    id_ = all_tensors.size();
-    all_tensors.push_back(this);
-    tile_level_deliminators.push_back(std::deque<int>());
-    current_tile_level.push_back(0);
   }
 
  public:
@@ -642,7 +644,7 @@ class Tensor : public ast::PrimTensor
   
   TensorDisambiguator operator[](TreeBuilder idx_expr)
   {
-    TensorDisambiguator vd(*this, {idx_expr.expr_}, current_tile_level[id_], port_);
+    TensorDisambiguator vd(*this, {idx_expr.expr_}, current_tile_level[id_][port_], port_);
     return vd;
   }
 
@@ -693,15 +695,15 @@ class Tensor : public ast::PrimTensor
     auto backing_it = buffer_levels_[port]->back()->begin();
 
     // Record where this tile level should be removed from the stack of tiles.
-    current_tile_level[id_]++;
-    if (current_tile_level[id_] > max_tile_level)
+    current_tile_level[id_][port]++;
+    if (current_tile_level[id_][port] > max_tile_level)
     {
-      max_tile_level = current_tile_level[id_];
+      max_tile_level = current_tile_level[id_][port];
       tile_level_spatial_expansions.push_back(1);
       current_global_tile_level++;
       global_tile_level_deliminators.push_back(spatial_partition_levels.size());
     }
-    tile_level_deliminators[id_].push_back(spatial_partition_levels.size());
+    tile_level_deliminators[id_][port].push_back(spatial_partition_levels.size());
 
     // Finalize the number of tile levels the old buffer level spans
     for (auto& backing_store : (*buffer_levels_[port]->back()))
@@ -724,7 +726,7 @@ class Tensor : public ast::PrimTensor
       {
         size += (granularity - (size % granularity));
       }
-      int local_idx = x % backing_iteration_interval;
+      int local_idx = (*backing_it)->fronting_buffers_.size();
       std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, granularity));
       (*new_buffs)[x] = new_buff;
       (*new_buffs)[x]->backing_buffer_ = *backing_it;
@@ -756,6 +758,9 @@ class Tensor : public ast::PrimTensor
       new_deq->push_back((*buffer_levels_[0])[0]);
     }
     buffer_levels_.push_back(new_deq);
+    // The new port starts over at tile level zero.
+    tile_level_deliminators[id_].push_back(std::deque<int>());
+    current_tile_level[id_].push_back(0);
     return buffer_levels_.size() - 1;
   }
 
@@ -901,7 +906,7 @@ class TensorPort
   
   TensorDisambiguator operator[](TreeBuilder idx_expr)
   {
-    TensorDisambiguator vd(*target_, {idx_expr.expr_}, port_);
+    TensorDisambiguator vd(*target_, {idx_expr.expr_}, current_tile_level[target_->id_][port_], port_);
     return vd;
   }
 

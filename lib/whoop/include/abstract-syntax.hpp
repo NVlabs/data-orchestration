@@ -287,7 +287,64 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "," << std::endl;
     shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalPatternGenerator");
   }
-  
+
+  void LogTopologyModule(std::ostream& ostr)
+  {  
+    ostr << "  - type: module" << std::endl;
+    ostr << "    class: symphony::modules::BuffetComplex" << std::endl;
+    ostr << "    base_name: " << Traceable::GetName() << std::endl;
+    ostr << "    configuration:" << std::endl;
+    ostr << "      knobs_use_prefix: false" << std::endl;
+    ostr << "      knobs:" << std::endl;
+    ostr << "        - \"num_receivers = " << GetNumReceivers() << "\""  << std::endl;
+    ostr << "        - \"num_updaters = " << GetNumReceivers() << "\""  << std::endl;
+    ostr << std::endl;
+  }
+
+  void LogTopologyConnections(std::ostream& ostr, int id, int local_spatial_idx, int max_tile_level)
+  {
+    for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
+    {
+      // The buffer feeds another (usually smaller) buffer.
+      ostr << "      - src:" << std::endl;
+      ostr << "        - name: " << Traceable::GetName() << std::endl;
+      ostr << "          port-name: read_data_out_[" << dst_idx << "]" << std::endl;
+      ostr << "        dst:" << std::endl;
+      ostr << "          - name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+      ostr << "            port-name: fill_data_in_" << std::endl;
+      ostr << "      - src:" << std::endl;
+      ostr << "        - name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+      ostr << "          port-name: drain_data_out_" << std::endl;
+      ostr << "        dst:" << std::endl;
+      ostr << "        - name: " << Traceable::GetName() << std::endl;
+      ostr << "          port-name: update_data_in_[" << dst_idx << "]" << std::endl;
+    }
+    // The buffer feeds datapaths between it and the next tile level 
+    // where this tensor participates.
+    // If there is no such tile level then it covers all the remaining levels.
+    int end_level = ending_global_tile_level_ == starting_global_tile_level_ ? max_tile_level : ending_global_tile_level_;
+    for (int tile_level = starting_global_tile_level_; tile_level < end_level; tile_level++)
+    {
+      int num_dpaths = num_datapaths_[tile_level - starting_global_tile_level_];
+      for (int x = 0; x < num_dpaths; x++)
+      {
+        int dp_idx = local_spatial_idx * num_dpaths + x;
+        ostr << "      - src:" << std::endl;
+        ostr << "        - name: " << Traceable::GetName() << std::endl;
+        ostr << "          port-name: read_data_out_[" << fronting_buffers_.size() + x << "]" << std::endl;
+        ostr << "        dst:" << std::endl;
+        ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
+        ostr << "          port-name: input_[" << id << "]" << std::endl; // Note: This index could be smarter.
+        ostr << "      - src:" << std::endl;
+        ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
+        ostr << "          port-name: output_[" << id << "]" << std::endl;
+        ostr << "        dst:" << std::endl;
+        ostr << "        - name: " << Traceable::GetName() << std::endl;
+        ostr << "          port-name: update_data_in_[" << fronting_buffers_.size() + x << "]" << std::endl;
+      }
+    }
+  }
+
   void Resize(int size)
   {
     command_log_.Resize(size);
@@ -921,10 +978,12 @@ class PrimTensor : public StatsCollection
 
   void DrainAll()
   {
-    for (auto port : buffer_levels_)
+    // Purposely iterate ports backwards since offchip is always port 0.
+    for (auto port_rit = buffer_levels_.rbegin(); port_rit != buffer_levels_.rend(); port_rit++)
     {
       // Purposely iterate from closer levels on down, for maximum locality.
-      for (auto level_rit = port->rbegin(); level_rit != port->rend(); level_rit++)
+      // Skip level 0 since it is the same offchip for each port and handled specially
+      for (auto level_rit = (*port_rit)->rbegin(); level_rit != std::prev((*port_rit)->rend()); level_rit++)
       {
         for (auto buf : *(*level_rit))
         {
@@ -932,6 +991,8 @@ class PrimTensor : public StatsCollection
         }
       }
     }
+    // Every tensor has an offchip.
+    (*buffer_levels_[0])[0]->at(0)->DrainAll();
   }
   
   void SetTraceLevel(int level)
@@ -952,101 +1013,56 @@ class PrimTensor : public StatsCollection
  
   void LogActivity(std::ostream& ostr)
   {
-    bool is_first = true;
     for (auto& port : buffer_levels_)
     {
-      for (auto& buffer_level : *port)
+      // Skip the offchip level as it is repeated across ports.
+      for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
-        for (auto& buff : *buffer_level)
+        for (auto& buff : *(*level_it))
         {
-          if (!is_first)
-          {
-            ostr << "," << std::endl;
-          }
-          else
-          {
-            is_first = false;
-          }
           buff->LogActivity(ostr);
+          ostr << "," << std::endl;
         }
       }
     }
+    // Every tensor has an offchip.
+    (*buffer_levels_[0])[0]->at(0)->LogActivity(ostr);
   }
 
   void LogTopologyModules(std::ostream& ostr)
   {
     for (auto& port : buffer_levels_)
     {
-      for (auto& buffer_level : *port)
+      // Skip the offchip level as it is repeated across ports.
+      for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
-        for (auto& buff : *buffer_level)
+        for (auto& buff : *(*level_it))
         {
-          ostr << "  - type: module" << std::endl;
-          ostr << "    class: symphony::modules::BuffetComplex" << std::endl;
-          ostr << "    base_name: " << buff->Traceable::GetName() << std::endl;
-          ostr << "    configuration:" << std::endl;
-          ostr << "      knobs_use_prefix: false" << std::endl;
-          ostr << "      knobs:" << std::endl;
-          ostr << "        - \"num_receivers = " << buff->GetNumReceivers() << "\""  << std::endl;
-          ostr << "        - \"num_updaters = " << buff->GetNumReceivers() << "\""  << std::endl;
-          ostr << std::endl;
+          buff->LogTopologyModule(ostr);
         }
       }
     }
+    // Every tensor has an offchip.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyModule(ostr);
   }
+
   void LogTopologyConnections(std::ostream& ostr, int max_tile_level)
   {
     for (auto& port : buffer_levels_)
     {
-      for (auto& buffer_level : *port)
+      // Skip the offchip level as it is repeated across ports.
+      for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         int local_spatial_idx = 0;
-        for (auto& buff : *buffer_level)
+        for (auto& buff : *(*level_it))
         {
-          for (int dst_idx = 0; dst_idx < buff->fronting_buffers_.size(); dst_idx++)
-          {
-            // The buffer feeds another (usually smaller) buffer.
-            ostr << "      - src:" << std::endl;
-            ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-            ostr << "          port-name: read_data_out_[" << dst_idx << "]" << std::endl;
-            ostr << "        dst:" << std::endl;
-            ostr << "          - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
-            ostr << "            port-name: fill_data_in_" << std::endl;
-            ostr << "      - src:" << std::endl;
-            ostr << "        - name: " << buff->fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
-            ostr << "          port-name: drain_data_out_" << std::endl;
-            ostr << "        dst:" << std::endl;
-            ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-            ostr << "          port-name: update_data_in_[" << dst_idx << "]" << std::endl;
-          }
-          // The buffer feeds datapaths between it and the next tile level 
-          // where this tensor participates.
-          // If there is no such tile level then it covers all the remaining levels.
-          int end_level = buff->ending_global_tile_level_ == buff->starting_global_tile_level_ ? max_tile_level : buff->ending_global_tile_level_;
-          for (int tile_level = buff->starting_global_tile_level_; tile_level < end_level; tile_level++)
-          {
-            int num_dpaths = buff->num_datapaths_[tile_level - buff->starting_global_tile_level_];
-            for (int x = 0; x < num_dpaths; x++)
-            {
-              int dp_idx = local_spatial_idx * num_dpaths + x;
-              ostr << "      - src:" << std::endl;
-              ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-              ostr << "          port-name: read_data_out_[" << buff->fronting_buffers_.size() + x << "]" << std::endl;
-              ostr << "        dst:" << std::endl;
-              ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
-              ostr << "          port-name: input_[" << id_ << "]" << std::endl; // Note: This index could be smarter.
-              ostr << "      - src:" << std::endl;
-              ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
-              ostr << "          port-name: output_[" << id_ << "]" << std::endl;
-              ostr << "        dst:" << std::endl;
-              ostr << "        - name: " << buff->Traceable::GetName() << std::endl;
-              ostr << "          port-name: update_data_in_[" << buff->fronting_buffers_.size() + x << "]" << std::endl;
-            }
-          }
+          buff->LogTopologyConnections(ostr, id_, local_spatial_idx, max_tile_level);
           local_spatial_idx++;
         }
       }
     }
+    // Every tensor has an offchip.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 0, max_tile_level);
   }
 };
 

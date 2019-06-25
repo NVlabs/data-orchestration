@@ -43,7 +43,6 @@ void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_
   compute_logs.resize(flattened_tile_level_spatial_expansions.size());
   for (int x = 0; x < flattened_tile_level_spatial_expansions.size(); x++)
   {
-    std::cout << "Adding partition of logs: " << flattened_tile_level_spatial_expansions[x] << std::endl;
     compute_logs[x].resize(flattened_tile_level_spatial_expansions[x], new activity::ComputeEngineLog());
   }
 }
