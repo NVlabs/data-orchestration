@@ -26,23 +26,9 @@
 
 Import('env')
 
-subdirs = ['conv1d', 
-           'conv2d',
-           'fc1d',
-           'outer-product',
-           'bellman-ford',
-           'graph-processing',
-           'conv6d',
-           'matrix-multiply',
-           'basic-sparsity',
-           'pagerank-nibble',
-           'pagerank-nibble-multiseed',
-           'sinkhorn-wmd',
-           'graphsage',
-           'ip-nsw']
+sources = Split("""
+sinkhorn-wmd.cpp
+""")
 
-disabled = []
-
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+env.Program(target = 'sinkhorn-wmd.bin', source = sources)
 

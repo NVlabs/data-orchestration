@@ -1,3 +1,4 @@
+#!/bin/sh
 # Copyright (c) 2017, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -24,25 +25,25 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Import('env')
+# Stop on errors
+set -e
+# build the executable
+scons -u -Q
 
-subdirs = ['conv1d', 
-           'conv2d',
-           'fc1d',
-           'outer-product',
-           'bellman-ford',
-           'graph-processing',
-           'conv6d',
-           'matrix-multiply',
-           'basic-sparsity',
-           'pagerank-nibble',
-           'pagerank-nibble-multiseed',
-           'sinkhorn-wmd',
-           'graphsage',
-           'ip-nsw']
+executable=./sinkhorn-wmd.bin
 
-disabled = []
+if [ $# -eq 3 ]; then
+    rnz=$1
+    dbsize=$2
+    vocabsize=$3
+else
+    rnz=8
+    dbsize=16
+    vocabsize=32
+fi
 
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
-
+# Run the program with some interesting (and legal) default settings
+${executable} \
+  --rnz=$rnz \
+  --dbsize=$dbsize \
+  --vocabsize=$vocabsize 
