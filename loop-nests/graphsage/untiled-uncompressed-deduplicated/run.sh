@@ -1,4 +1,5 @@
-# Copyright (c) 2017, NVIDIA CORPORATION. All rights reserved.
+#!/bin/sh
+# Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -24,25 +25,34 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Import('env')
+# Stop on errors
+set -e
+# build the executable
+scons -uj32 -Q
 
-subdirs = ['conv1d', 
-           'conv2d',
-           'fc1d',
-           'outer-product',
-           'bellman-ford',
-           'graph-processing',
-           'conv6d',
-           'matrix-multiply',
-           'basic-sparsity',
-           'pagerank-nibble',
-           'pagerank-nibble-multiseed',
-           'sinkhorn-wmd',
-           'graphsage',
-           'ip-nsw']
+if [ $# -eq 1 ]; then
+    tlevel=$1
+else
+    tlevel=3
+fi
 
-disabled = []
+vertices=64
+features=8
+hidden=16
+intermed=$[2*$hidden]
 
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+in_dir=../input/
+out_dir=../output/
 
+# Run the program with some interesting (and legal) default settings
+WHOOP_CHECK_REFERENCE=1 ./graphsage.bin \
+  --tensor_adj_matrix_file=$in_dir/adj_matrix.$vertices.$vertices.in.txt \
+  --tensor_features_file=$in_dir/features.$vertices.$features.in.txt \
+  --tensor_W_in_file=$in_dir/W_in.$hidden.$features.in.txt \
+  --tensor_W_1_file=$in_dir/W_1.$hidden.$intermed.in.txt \
+  --tensor_b_1_file=$in_dir/b_1.$hidden.in.txt \
+  --tensor_W_2_file=$in_dir/W_2.$hidden.$hidden.in.txt \
+  --tensor_b_2_file=$in_dir/b_2.$hidden.in.txt \
+  --tensor_W_out_file=$in_dir/W_out.$hidden.in.txt \
+  --ref_prediction_file=$out_dir/prediction.$vertices.ref.txt \
+  --trace_level=${tlevel}
