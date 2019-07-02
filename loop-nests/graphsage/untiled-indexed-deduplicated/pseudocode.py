@@ -20,24 +20,27 @@ float features[V][F]
 bool  is_connected[V, V]
 
 # Intermediate tensors:
+
+# -- dense --
 int   batch[B]
 int   n1_sample[B][N]
 int   n2_sample[B][N][N]
 
+# -- sparse --
 bool  n1_dedup[V]
+bool  n1_parent[V][B][N]
+
 bool  n2_dedup[V]
+bool  n2_parent[V][B][N][N]
 
-float n2_encoded[B][N][N][H]
-
-float n1_sums[B][N][H]
-int   n1_count[B][N]
+# -- dense --
 float n1_encoded[B][N][H]
-
+float n2_encoded[B][N][N][H]
+float n1_sums[B][N][H]
 float src_sums[B][H]
-int   src_count[B]
 
 # Output:
-float prediction[V][B]
+float prediction[B]
 
 # Pre-generate (in un-simulated code) batch, n1 and n2 samples.
 for b_pos = [0..B):
@@ -65,13 +68,12 @@ for b_pos = [0..B):
   for n1_pos = [0..N):
     n1 = n1_sample[b_pos, n1_pos]
     n1_dedup[n1] = true
-    n1_parent[n1][b_pos, n1] = true
+    n1_parent[n1][b_pos, n1_pos] = true
 
 # Dedup n2 neighbors and setup parent matrix.
 # We could have inlined this with the n1 dedup nest above.
 for b_pos = [0..B):
   for n1_pos = [0..N):
-    n1 = n1_sample[b_pos, n1]
     for n2_pos = [0..N):
       n2 = n2_sample[b_pos, n1_pos, n2_pos]
       n2_dedup[n2] = true
@@ -95,7 +97,7 @@ for n2 = [0..V]:
         for n2_pos = [0..N):
           if n2_parent[n2][b_pos, n1_pos, n2_pos]:
             for h = [0..H):
-              n2_encoded[b_pos, n1_pos, n2_pos] = encoded[h]
+              n2_encoded[b_pos, n1_pos, n2_pos][h] = encoded[h]
 
 # Encode de-duplicated n1 vertices and distribute/copy the results into the dense
 # n1_encoded tensor.
@@ -118,7 +120,7 @@ for n1 = [0..V]:
 
 # -- dense --
 
-# (1) work on B*N*N cuboid.
+# (1) Work on B*N*N cuboid.
 for b_pos = [0..B):
   for n1_pos = [0..N):
     for n2_pos = [0..N):
@@ -127,13 +129,13 @@ for b_pos = [0..B):
       for h = [0..H):
         n1_sums[b_pos, n1_pos][h] += n2_encoded[b_pos, n1_pos, n2_pos][h]
 
-# (2) work on B*N rectangle.
+# (2) Work on B*N rectangle.
 for b_pos = [0..B):
   for n1_pos = [0..N):
     
     # Concatenate n1_sums with n1_encoded.
     for h = [0..H):
-      activation[h] = n1_encoded[n, n1_pos][h]
+      activation[h] = n1_encoded[b_pos, n1_pos][h]
       activation[h+H] = n1_sums[b_pos, n1_pos][h] / N
       
     # Apply the W_1 NN layer.
@@ -147,7 +149,7 @@ for b_pos = [0..B):
     for h = [0..H):
       src_sums[b_pos][h] += hidden1[h]
 
-# (3) work on B vector.
+# (3) Work on B vector.
 for b_pos = [0..B):
   
   # Calculate src means.
