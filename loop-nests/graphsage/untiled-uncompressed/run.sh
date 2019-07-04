@@ -39,7 +39,7 @@ fi
 vertices=64
 features=8
 hidden=16
-intermed=$[2*$hidden]
+intermed=32
 
 in_dir=../input/
 out_dir=../output/
