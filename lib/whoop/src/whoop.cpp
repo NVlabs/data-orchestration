@@ -366,10 +366,7 @@ void LogTensorTopology(std::string fname)
   {
     (*it)->LogTopologyConnections(ofile, max_tile_level + 1);
   }
-  
   ofile << std::endl;
-  ofile << "logical:" << std::endl;
-  ofile << "  - test" << std::endl;
 }
 
 void LogDefaultKnobs(std::string fname)

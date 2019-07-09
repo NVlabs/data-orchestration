@@ -53,7 +53,7 @@ void LogComputeActivity(std::ostream& ostr)
   {
     for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
     {
-      compute_logs[tile_level][local_index]->Dump(ostr, "compute_engine[" + std::to_string(tile_level) + "][" + std::to_string(local_index) + "]", "symphony::modules::ComputeEngineComplex");
+      compute_logs[tile_level][local_index]->Dump(ostr, "compute_engine_" + std::to_string(tile_level) + "_" + std::to_string(local_index), "symphony::modules::ComputeEngineComplex");
 
       if (!(tile_level == compute_logs.size() - 1 &&
             local_index == compute_logs[tile_level].size() - 1))
@@ -73,7 +73,7 @@ void LogComputeTopology(std::ostream& ofile, int num_tensors)
     {
       ofile << "  - type: module" << std::endl;
       ofile << "    class: symphony::modules::ComputeEngineComplex" << std::endl;
-      ofile << "    base_name: compute_engine[" << tile_level << "][" << local_index << "]" << std::endl;
+      ofile << "    base_name: compute_engine_" << tile_level << "_" << local_index << std::endl;
       ofile << "    configuration:" << std::endl;
       ofile << "      knobs_use_prefix: false" << std::endl;
       ofile << "      knobs:" << std::endl;

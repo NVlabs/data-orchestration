@@ -173,12 +173,13 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void LogUpdate(int address, int curr_index, int requestor_idx, bool caused_evict)
   {
-    ASSERT(!options::kShouldLogActivity) << "Update log coalescing failure. Address: " << address << ", requestor: " << requestor_idx << "(If you are seeing this message a lot we may need to rethink our coalescing assumptions.)" << EndT;
+    T(4) << "Logging implicit RMW to address: " << address << " by requestor: " << requestor_idx << EndT;
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = curr_index;
     assert(requestor_idx < 64);
     info.receiver_mask_[requestor_idx] = true;
+    info.updater_mask_[requestor_idx] = true;
     info.caused_evict_ = caused_evict;
     info.is_dirty_ = true;
     if (coalescing_buffer_.size() == coalescing_window_size_)
@@ -308,16 +309,16 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       // The buffer feeds another (usually smaller) buffer.
       ostr << "      - src:" << std::endl;
       ostr << "        - name: " << Traceable::GetName() << std::endl;
-      ostr << "          port-name: read_data_out_[" << dst_idx << "]" << std::endl;
+      ostr << "          port-name: read_data_out_" << dst_idx << std::endl;
       ostr << "        dst:" << std::endl;
       ostr << "          - name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
-      ostr << "            port-name: fill_data_in_" << std::endl;
+      ostr << "            port-name: fill_data_in_0" << std::endl;
       ostr << "      - src:" << std::endl;
       ostr << "        - name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
-      ostr << "          port-name: drain_data_out_" << std::endl;
+      ostr << "          port-name: drain_data_out_0" << std::endl;
       ostr << "        dst:" << std::endl;
       ostr << "        - name: " << Traceable::GetName() << std::endl;
-      ostr << "          port-name: update_data_in_[" << dst_idx << "]" << std::endl;
+      ostr << "          port-name: update_data_in_" << dst_idx << std::endl;
     }
     // The buffer feeds datapaths between it and the next tile level 
     // where this tensor participates.
@@ -331,16 +332,16 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         int dp_idx = local_spatial_idx * num_dpaths + x;
         ostr << "      - src:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
-        ostr << "          port-name: read_data_out_[" << fronting_buffers_.size() + x << "]" << std::endl;
+        ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + x << std::endl;
         ostr << "        dst:" << std::endl;
-        ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
-        ostr << "          port-name: input_[" << id << "]" << std::endl; // Note: This index could be smarter.
+        ostr << "        - name: compute_engine_" << tile_level << "_" << dp_idx << std::endl;
+        ostr << "          port-name: input_" << id << std::endl; // Note: This index could be smarter.
         ostr << "      - src:" << std::endl;
-        ostr << "        - name: compute_engine[" << tile_level << "][" << dp_idx << "]" << std::endl;
-        ostr << "          port-name: output_[" << id << "]" << std::endl;
+        ostr << "        - name: compute_engine_" << tile_level << "_" << dp_idx << std::endl;
+        ostr << "          port-name: output_" << id << std::endl;
         ostr << "        dst:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
-        ostr << "          port-name: update_data_in_[" << fronting_buffers_.size() + x << "]" << std::endl;
+        ostr << "          port-name: update_data_in_" << fronting_buffers_.size() + x << std::endl;
       }
     }
   }
@@ -891,6 +892,16 @@ class PrimTensor : public StatsCollection
   const int& PrimAt(const int& idx) const
   {
     return vals_[idx];
+  }
+
+  void PrimPushBack(const int& val)
+  {
+    vals_.push_back(val);
+  }
+
+  void PrimShrinkToFit()
+  {
+    vals_.shrink_to_fit();
   }
 
   UINT64 size()

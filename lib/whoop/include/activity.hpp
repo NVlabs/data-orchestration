@@ -298,8 +298,6 @@ class ComputeEngineLog : public Log
 
   // Which tensors are we reading for the current op?
   std::bitset<64> read_activity_by_tensor_;
-  std::bitset<64> write_activity_by_tensor_;
-  bool active_ = false;
   
   PatternGeneratorLog sgen_log_;
   PatternGeneratorLog dgen_log_;
@@ -313,7 +311,6 @@ class ComputeEngineLog : public Log
     sgen_log_.Send(read_activity_by_tensor_.to_ulong());
     dgen_log_.Send(outputs.to_ulong());
     read_activity_by_tensor_.reset();
-    active_ = true;
   }
   void LogInputTensor(const int& id)
   {
@@ -327,13 +324,11 @@ class ComputeEngineLog : public Log
   void LogOutputTensor(const std::bitset<64>& outputs)
   {
     if (!options::kShouldLogActivity) return;
-    write_activity_by_tensor_ |= outputs;
     EmitOp(outputs);
   }
   
   void Dump(std::ostream& ostr, const std::string& nm, const std::string& mytype)
   {
-    //if (!active_) return;
     sgen_log_.Dump(ostr, nm + "_input_sources", "symphony::modules::LocalPatternGenerator");
     ostr << "," << std::endl;
     dgen_log_.Dump(ostr, nm + "_output_destinations", "symphony::modules::LocalPatternGenerator");

@@ -214,9 +214,9 @@ int main(int argc, char** argv)
                   temp = 0;
                 }
                 end();
-                activation[h] = temp;
+                activation[h] = temp + (activation[h] * 0);  // TEMPORARY RMW WORKAROUND
                 activation[h+H] = n1_sums[s][b][n1][n1_pos][h] /
-                  n1_count[s][b][n1][n1_pos]; // mean of n2 results.
+                  n1_count[s][b][n1][n1_pos] + (activation[h+H] * 0); // mean of n2 results.
               }
               end(); // t_for(h, 0, H);
 
