@@ -20,10 +20,7 @@ int   n2_sample[B][N][N]
 
 # -- sparse --
 bool  n1_dedup[V]
-int   n1_parent[B][N]
-
 bool  n2_dedup[V]
-int   n2_parent[B][N][N]
 
 # -- dense --
 float n1_encoded[B][N][H]
@@ -51,20 +48,18 @@ for b_pos = [0..B):
       
 # -- sparse --
             
-# Dedup n1 neighbors and setup parent tensor.
+# Dedup n1 neighbors.
 for b_pos = [0..B):
   for n1_pos = [0..N):
     n1 = n1_sample[b_pos, n1_pos]
     n1_dedup[n1] = true
-    n1_parent[b_pos, n1_pos] = n1
 
-# Dedup n2 neighbors and setup parent tensor.
+# Dedup n2 neighbors.
 for b_pos = [0..B):
   for n1_pos = [0..N):
     for n2_pos = [0..N):
       n2 = n2_sample[b_pos, n1_pos, n2_pos]
       n2_dedup[n2] = true
-      n2_parent[b_pos, n1_pos, n2_pos] = n2
 
 # Fetch and encode de-duplicated n2 vertices.
 for n2 = [0..V]:
@@ -90,7 +85,7 @@ for b_pos = [0..B):
     for n2_pos = [0..N):
       
       # Gather n2_encoded and reduce into n1_sums.
-      n2_idx = n2_parent[b_pos, n1_pos, n2_pos]
+      n2_idx = n2_sample[b_pos, n1_pos, n2_pos]
       for h = [0..H):
         n1_sums[b_pos, n1_pos][h] += n2_encoded[n2_idx][h]
 
@@ -99,7 +94,7 @@ for b_pos = [0..B):
   for n1_pos = [0..N):
     
     # Gather n1_encoded and concatenate with n1_sums.
-    n1_idx = n1_parent[b_pos, n1_pos]
+    n1_idx = n1_sample[b_pos, n1_pos]
     for h = [0..H):
       activation[h] = n1_encoded[n1_idx][h]
       activation[h+H] = n1_sums[b_pos, n1_pos][h] / N
