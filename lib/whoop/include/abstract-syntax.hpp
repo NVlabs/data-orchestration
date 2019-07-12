@@ -1089,6 +1089,7 @@ class ExecutionContext
   void BeginSpatialPartitioning(int num_partitions)
   {
     partition_stack_.push_back({current_spatial_partition_, num_partitions});
+    if (num_partitions == 1) return;
     // Find the absolute id in the space using an equation of this form:
     // x3 * X2 * X1 * X0 + x2 * X1 * X0 + x1 * X0 + x0
     // Note that x0 == 0 here since we are starting this dimension.
