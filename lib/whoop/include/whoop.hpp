@@ -599,7 +599,7 @@ class Tensor : public ast::PrimTensor
     // Set up tile-level tracking state.
     id_ = all_tensors.size();
     tile_level_deliminators.push_back(std::vector<std::deque<int>>());
-    current_tile_level.push_back(std::vector({0}));
+    current_tile_level.push_back(std::vector<int>({0}));
     all_tensors.push_back(this);
     // Add port 0, and add the offchip buffer to it.
     AddPort();
