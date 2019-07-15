@@ -726,15 +726,15 @@ class Tensor : public ast::PrimTensor
       {
         size += (granularity - (size % granularity));
       }
+      if (x != 0 && (x % backing_iteration_interval == 0))
+      {
+        backing_it++;
+      }
       int local_idx = (*backing_it)->fronting_buffers_.size();
       std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, granularity));
       (*new_buffs)[x] = new_buff;
       (*new_buffs)[x]->backing_buffer_ = *backing_it;
       (*backing_it)->fronting_buffers_.push_back(new_buff);
-      if (x != 0 && x % backing_iteration_interval == 0)
-      {
-        backing_it++;
-      }
     }
     buffer_levels_[port]->push_back(new_buffs);
 
