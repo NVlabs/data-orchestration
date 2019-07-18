@@ -36,14 +36,18 @@
 namespace whoop
 {
 
-std::vector<std::vector<activity::ComputeEngineLog*>> compute_logs{};
+std::vector<std::vector<std::unique_ptr<activity::ComputeEngineLog>>> compute_logs{};
 
 void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions)
 {
   compute_logs.resize(flattened_tile_level_spatial_expansions.size());
   for (int x = 0; x < flattened_tile_level_spatial_expansions.size(); x++)
   {
-    compute_logs[x].resize(flattened_tile_level_spatial_expansions[x], new activity::ComputeEngineLog());
+    compute_logs[x].resize(flattened_tile_level_spatial_expansions[x]);
+    for (int y = 0; y < flattened_tile_level_spatial_expansions[x]; y++)
+    {
+      compute_logs[x][y] = std::unique_ptr<activity::ComputeEngineLog>(new activity::ComputeEngineLog());
+    }
   }
 }
 

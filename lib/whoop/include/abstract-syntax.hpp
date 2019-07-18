@@ -63,7 +63,7 @@ namespace whoop
 // Global variable to serve as top-of-tree for stats dump
 extern StatsCollection top_stats;
 
-extern std::vector<std::vector<activity::ComputeEngineLog*>> compute_logs;
+extern std::vector<std::vector<std::unique_ptr<activity::ComputeEngineLog>>> compute_logs;
 void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions);
 void LogComputeActivity(std::ostream& ostr);
 void LogComputeTopology(std::ostream& ofile, int num_tensors);
@@ -96,7 +96,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   class BuffetLogInfo
   {
    public:
-    int index_ = 0;
+    int index_ = -1;
     std::bitset<64> receiver_mask_ = 0;
     std::bitset<64> updater_mask_ = 0;
     bool caused_evict_ = false;
@@ -113,17 +113,22 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   
   int num_fills_ = 0;
   int num_shrinks_ = 0;
+  int num_evicts_ = 0;
   
-  bool CheckCoalescing(int address, int requestor_idx, bool is_update, int* entry = NULL)
+  bool CheckCoalescing(int address, int requestor_idx, bool is_update)
   {
     // Purposely search backwards to find the most recent entry.
     // This way even if the previous entry wasn't evicted will we find the latest.
     auto it = coalescing_buffer_.rbegin();
-    for ( ; it != coalescing_buffer_.rend(); it++)
+    // Just search the coalescing window. If there's less than that, stop early.
+    auto end_it = coalescing_buffer_.size() >= coalescing_window_size_ ? 
+                  coalescing_buffer_.rbegin() + coalescing_window_size_ :
+                  coalescing_buffer_.rend();
+    for ( ; it != end_it; it++)
     {
       if ((*it).first == address) break;
     }
-    if (it != coalescing_buffer_.rend())
+    if (it != end_it)
     {
       assert(requestor_idx < 64);
       // Don't coalesce your own requests. Can't multicast to yourself!
@@ -142,10 +147,6 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         (*it).second.updater_mask_[requestor_idx] = true;
         (*it).second.is_dirty_ = true;
       }
-      if (entry)
-      {
-        *entry = (*it).second.index_;
-      }
       return true;
     }
     else
@@ -154,41 +155,49 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     }
   }
   
-  void LogAccess(int address, int curr_index, int requestor_idx, bool caused_evict)
+  BuffetLogInfo* LogAccess(int address, int requestor_idx, bool caused_evict, int index = -1)
   {
     // Keep track of last accessed address.
     BuffetLogInfo info;
-    info.index_ = curr_index;
+    info.index_ = index;
     assert(requestor_idx < 64);
     info.receiver_mask_[requestor_idx] = true;
     info.caused_evict_ = caused_evict;
-    if (coalescing_buffer_.size() == coalescing_window_size_)
-    {
-      // Evict the oldest from the window.
-      RecordInfo(coalescing_buffer_.front().second);
-      coalescing_buffer_.pop_front();
-    }
     coalescing_buffer_.push_back(std::make_pair(address, info));
+    return &coalescing_buffer_.back().second;
   }
 
-  void LogUpdate(int address, int curr_index, int requestor_idx, bool caused_evict)
+  BuffetLogInfo* LogUpdate(int address, int requestor_idx, bool caused_evict, int index = -1)
   {
     T(4) << "Logging implicit RMW to address: " << address << " by requestor: " << requestor_idx << EndT;
     // Keep track of last accessed address.
     BuffetLogInfo info;
-    info.index_ = curr_index;
+    info.index_ = index;
     assert(requestor_idx < 64);
     info.receiver_mask_[requestor_idx] = true;
     info.updater_mask_[requestor_idx] = true;
     info.caused_evict_ = caused_evict;
     info.is_dirty_ = true;
-    if (coalescing_buffer_.size() == coalescing_window_size_)
-    {
-      // Evict the oldest from the window.
-      RecordInfo(coalescing_buffer_.front().second);
-      coalescing_buffer_.pop_front();
-    }
     coalescing_buffer_.push_back(std::make_pair(address, info));
+    return &coalescing_buffer_.back().second;
+  }
+
+  void TryToDrainOldestAccesses()
+  {
+    // Don't try to drain until the window is overfull.
+    // At that point drain it back to being full.
+    if (coalescing_buffer_.size() <= coalescing_window_size_) return;
+    // We can drain the oldest acceses until we find one that is incomplete.
+    // E.g. has an invalid index (-1)
+    int num_to_try = coalescing_buffer_.size() - coalescing_window_size_;
+    auto it = coalescing_buffer_.begin();
+    for ( ; it != coalescing_buffer_.begin() + num_to_try; it++)
+    {
+      if ((*it).second.index_ == -1) break;
+      RecordInfo((*it).first, (*it).second);
+    }
+    // Note: do this in two steps so we don't invalidate our iterator....
+    coalescing_buffer_.erase(coalescing_buffer_.begin(), it);
   }
   
   void DrainLog()
@@ -202,7 +211,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
               it++)
     {
       is_modified |= (*it).second.is_dirty_;
-      RecordInfo((*it).second);
+      // At this point all entries must be valid.
+      assert((*it).second.index_ != -1);
+      RecordInfo((*it).first, (*it).second);
     }
     coalescing_buffer_.clear();
 
@@ -218,7 +229,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     }
   }
   
-  void RecordInfo(const BuffetLogInfo& info)
+  void RecordInfo(int address, const BuffetLogInfo& info)
   {
     if (!options::kShouldLogActivity) return;
 
@@ -229,6 +240,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       {
         command_log_.SetModified(); // XXX This is not quite right... it should be that the evicted line was dirty... this is a bit of a hack...
       }
+      
+      // Log the shrink.
       command_log_.Shrink();
       shrink_pgen_log_.Shrink();
       num_shrinks_++;
@@ -236,6 +249,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
     // Record accces.
     command_log_.Read(info.is_dirty_);
+    //T(0) << "Record: " << address << ", " << command_log_.GetRelativeIndex(info.index_) << ", " << info.index_ << EndT;
     read_pgen_log_.Send(command_log_.GetRelativeIndex(info.index_));
     destination_pgen_log_.Send(info.receiver_mask_.to_ulong());
 
@@ -249,6 +263,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       updaters_pgen_log_.Send(final_mask == 0 ? 1 : final_mask);
     }
   }
+
  public:
   
   std::shared_ptr<BufferModel> backing_buffer_ = NULL;
@@ -413,8 +428,7 @@ class OffChipBufferModel : public BufferModel
   }
 
   virtual void Access(int address, int requestor_idx)
-  {
-    
+  {   
     if (CheckCoalescing(address, requestor_idx, false))
     {  
       IncrStat("Offchip multicasts");
@@ -425,7 +439,8 @@ class OffChipBufferModel : public BufferModel
       CheckRowBufferHit(address);
       IncrStat("Offchip reads");
       T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
-      LogAccess(address, address, requestor_idx, false);
+      LogAccess(address, requestor_idx, false, address);
+      TryToDrainOldestAccesses();
     }
   }
   
@@ -441,8 +456,9 @@ class OffChipBufferModel : public BufferModel
       CheckRowBufferHit(address);
 
       IncrStat("Offchip updates");
-      LogUpdate(address, address, requestor_idx, false);
       T(4) << "Update, address: " << address  << " by requestor: " << requestor_idx << EndT;
+      LogUpdate(address, requestor_idx, false, address);
+      TryToDrainOldestAccesses();
     }
   }
 
@@ -467,19 +483,33 @@ class OffChipBufferModel : public BufferModel
 class AssociativeBufferModel : public BufferModel
 {
  public:
-  std::unordered_map<int, int> presence_info_;
-  std::vector<int> cache_;
-  std::vector<int> modified_; // NOTE: We had some problems with std::vector<bool>
-  int head_ = 0;
+ 
+  class EntryInfo
+  {
+   public:
+    bool modified_ = false;
+    std::list<BuffetLogInfo*> accesses_{};
+  };
+  std::unordered_map<int, EntryInfo> presence_info_;
+  std::list<int> lru_cache_; // list occupancy should never exceed size_. Back = least recently used.
   int occupancy_ = 0;
   int size_;
   int granularity_;
   int buffet_size_;
   int extra_buffering_ = 0;
+  
+  void SetRecentlyUsed(int address)
+  {
+    auto it = std::find(lru_cache_.begin(), lru_cache_.end(), address);
+    if (it != lru_cache_.end())
+    {
+      lru_cache_.push_front(*it); // Does not invalidate iterator in std::list
+      lru_cache_.erase(it);
+    }
+  }
     
   explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "", int shrink_granularity = 0, int granularity = 1) : 
-    cache_(size/granularity), 
-    modified_(size/granularity), 
+    lru_cache_(), 
     size_(size/granularity), 
     BufferModel(level, starting_tile_level, local_spatial_idx, nm), 
     granularity_(granularity), 
@@ -507,6 +537,41 @@ class AssociativeBufferModel : public BufferModel
     int res = (x + y) % size_;
     return res;
   }
+  
+  void EvictLRU()
+  {
+    // Determine victim
+    int victim_addr = lru_cache_.back();
+    EntryInfo victim = presence_info_[victim_addr];
+
+    // We now have enough info to determine the victim's buffet slot.
+    int slot = num_evicts_ % size_; // NOTE: should take into account extra_buffering_
+    //T(0) << "Slot: " << slot << ", num_evicts: " << num_evicts_ << ", size:" << size_ << EndT;
+    num_evicts_++;
+
+    // Update all logged accesses to have the slot info.
+    for (auto access : victim.accesses_)
+    {
+      access->index_ = slot;
+    }
+
+    // Check if the above completed any of the oldest accesses.
+    TryToDrainOldestAccesses();
+
+    // remove victim from unordered_map
+    presence_info_.erase(victim_addr);
+
+    // We now have enough info to back-log the fill.
+    backing_buffer_->Access(victim_addr, local_spatial_idx_);
+    if (victim.modified_)
+    {
+      backing_buffer_->Update(victim_addr, local_spatial_idx_);
+    }
+
+    // Final book-keeping updates
+    occupancy_--;
+    lru_cache_.pop_back();
+  }
 
     // Note that the address coming in is just the index within the tensor, not
     // the actual address
@@ -518,6 +583,7 @@ class AssociativeBufferModel : public BufferModel
     {
       IncrStat("L" + std::to_string(level_) + " multicasts");
       T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx << EndT;
+      SetRecentlyUsed(address);
       return;
     }
     
@@ -526,47 +592,34 @@ class AssociativeBufferModel : public BufferModel
 
     bool found        = false;
     bool caused_evict = false;
-    int  curr_index = -1;
     
     auto it = presence_info_.find(address);
     if (it != presence_info_.end())
     {
       found = true;
-      curr_index = it->second;
-      T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
+      T(4) << "    (Already present in buffer)" << EndT;
+      SetRecentlyUsed(address);
     }
     
     if (!found)
     {
       IncrStat("L" + std::to_string(level_) + " fills");
       num_fills_++;
-      backing_buffer_->Access(address, local_spatial_idx_);
       if (occupancy_ == size_)
       {
-        if (modified_[head_] == 1)
-        {
-          backing_buffer_->Update(cache_[head_], local_spatial_idx_);
-        }
-
-        // remove victim from unordered_map
-        presence_info_.erase(cache_[head_]);
-
-        ModIncr(head_);
-        occupancy_--;
+        EvictLRU();
         caused_evict = true;
       }
-      int tail = ModAdd(head_, occupancy_);
-      T(4) << "    (Filling from next level to index: " << tail << ", caused_evict:" << caused_evict << ")" << EndT;
+      T(4) << "    (Filling from next level, caused_evict:" << caused_evict << ")" << EndT;
 
-      cache_[tail] = address;
-      modified_[tail] = 0;
+      // Start out as most recently used.
+      lru_cache_.emplace_front(address);
       occupancy_++;
 
-      // insert into unordered_map, and store pointer to modified should we update
-      presence_info_[address] = tail;
-      curr_index             = tail;
+      // insert into unordered_map with default info (e.g., clean)
+      presence_info_[address] = EntryInfo();
     }
-    LogAccess(address, curr_index, requestor_idx, caused_evict);
+    presence_info_[address].accesses_.push_back(LogAccess(address, requestor_idx, caused_evict));
   }
 
   // Note that the address coming in is just the index within the tensor, not
@@ -575,12 +628,11 @@ class AssociativeBufferModel : public BufferModel
   {
     int address = addr - (addr % granularity_);
 
-    int entry;
-    if (CheckCoalescing(address, requestor_idx, true, &entry))
+    if (CheckCoalescing(address, requestor_idx, true))
     {
       IncrStat("L" + std::to_string(level_) + " multi-reduces");
       T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx << EndT;
-      modified_[entry] = true;
+      presence_info_[address].modified_ = true;
       return;
     }
     
@@ -589,62 +641,46 @@ class AssociativeBufferModel : public BufferModel
 
     bool found        = false;
     bool caused_evict = false;
-    int  curr_index = -1;
 
     auto it = presence_info_.find(address);
     if (it != presence_info_.end())
     {
-      curr_index = it->second;
-      modified_[curr_index] = 1;
-      T(4) << "    (Already present in buffer at index: " << curr_index << ")" << EndT;
       found = true;
+      presence_info_[address].modified_ = true;
+      T(4) << "    (Already present in buffer)" << EndT;
+      SetRecentlyUsed(address);
     }
-
+    
     if (!found)
     {
+      num_fills_++;
       if (occupancy_ == size_)
       {
-        if (modified_[head_] == 1)
-        {
-          backing_buffer_->Update(cache_[head_], local_spatial_idx_);
-        }
-
-        // remove victim from unordered_map
-        presence_info_.erase(cache_[head_]);
-
-        ModIncr(head_);
-        occupancy_--;
+        EvictLRU();
         caused_evict = true;
       }
+      T(4) << "    (Allocating on write, caused_evict:" << caused_evict << ")" << EndT;
 
-      int tail = ModAdd(head_, occupancy_);
-      T(4) << "    (Allocating on write to index: " << tail << ", caused_evict:" << caused_evict << ")" << EndT;
-      cache_[tail] = address;
-      modified_[tail] = 1;
+      // Start out as most recently used.
+      lru_cache_.emplace_front(address);
       occupancy_++;
 
-      // insert into unordered_map, and store pointer to modified should we update
-      presence_info_[address] = tail;
-      curr_index              = tail;
+      // insert into unordered_map with default info (e.g., clean)
+      presence_info_[address] = EntryInfo();
+      presence_info_[address].modified_ = true;
     }
-    LogUpdate(address, curr_index, requestor_idx, caused_evict);
+    presence_info_[address].accesses_.push_back(LogUpdate(address, requestor_idx, caused_evict));
     command_log_.SetModified();
   }
-        
+
   virtual void DrainAll()
   {
-    for (int x = 0; x < occupancy_; x++)
+    // Drain in LRU order.
+    while (!lru_cache_.empty())
     {
-      int entry = ModAdd(head_, x);
-      if (modified_[entry] == 1)
-      {
-        backing_buffer_->Update(cache_[entry], local_spatial_idx_);
-
-        // since it has been drained, no longer modified
-        modified_[entry] = 0;
-      }
+      EvictLRU();
     }
-    occupancy_ = 0;
+    assert(occupancy_ == 0);
     DrainLog();
   }
 

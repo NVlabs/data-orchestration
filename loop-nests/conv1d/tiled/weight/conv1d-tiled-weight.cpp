@@ -64,7 +64,7 @@ int main(int argc, char** argv)
 
   t_for(s, 0, S);
   {
-    inputs.AddTileLevel(S, 1);
+    inputs.AddTileLevel(Q, 1);
     weights.AddTileLevel(1);
     outputs.AddTileLevel(Q);
     
@@ -79,15 +79,6 @@ int main(int argc, char** argv)
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
   whoop::T(0) << "DONE." << whoop::EndT;
-
-  for (int x = 0; x < W; x++)
-  {
-    whoop::T(2) << "I " << x << " = " << inputs.At(x) << whoop::EndT;
-  }
-  for (int x = 0; x < Q; x++)
-  {
-    whoop::T(2) << "O " << x << " = " << outputs.At(x) << whoop::EndT;
-  }
 
   whoop::Done();
 }
