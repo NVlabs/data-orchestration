@@ -89,9 +89,9 @@ void LogComputeTopology(std::ostream& ofile, int num_tensors)
 
 namespace buff
 {
-int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int max_spatial_partitions )
+int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int num_spatial_partitions )
 {
-  return ( curr_spatial_idx / (max_spatial_partitions/buffs_at_level) );
+  return ( curr_spatial_idx / (num_spatial_partitions/buffs_at_level) );
 }
     
 } // end namespace buff

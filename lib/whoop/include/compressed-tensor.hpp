@@ -57,11 +57,11 @@ class CompressedTensor
   std::vector<std::string>  dim_names_;
   std::vector<int>          last_inserted_coordinate_; // Last inserted point for sanity checking.
 
+ public:
+
   std::vector<std::shared_ptr<Vec>> segments_;
   std::vector<std::shared_ptr<Vec>> coordinates_;
   std::shared_ptr<Vec> values_;
-
- public:
 
   CompressedTensor(const std::string& name, const std::vector<int>& dim_sizes, const std::vector<std::string>& dim_names, long nnz, const Type& my_type = Type::Normal) :
     name_(name),
@@ -124,9 +124,10 @@ class CompressedTensor
 
   void PrintCompressedTensor( int print_coords=false )
   {
-      T(4) << EndT;;
+      T(4) << EndT;
       T(4) <<"Compressed Sparse Fiber (CompressedTensor) Representation Of Graph:"<< EndT;;
-      T(4) << EndT;;
+      T(4) << EndT;
+      /*
       for(int dim=num_dims_ - 1; dim>=0; dim--) 
       {
           T(4) <<"\tDim: "<<dim<<" SegmentArray["<<dim_names_[dim]<<"] = ";
@@ -143,7 +144,7 @@ class CompressedTensor
           }
           T(4) <<" Max: "<<coordinates_[dim]->size()<< EndT;;
           T(4) << EndT;;
-      }
+      }*/
   }
 
   void Init( int nnz )
@@ -178,13 +179,13 @@ class CompressedTensor
   void Insert( const std::vector<int>& coord, int val_in=1 )
   {
 
-      ASSERT(coord.size() == num_dims_) << "Wrong number of coordinates in point. Expected: " << num_dims_ << ", Got: " << coord.size()) << EndT;
+      ASSERT(coord.size() == num_dims_) << "Wrong number of coordinates in point. Expected: " << num_dims_ << ", Got: " << coord.size() << EndT;
       
       // Check that we are inserting points in correct sorted order.
       int strictly_greater = 0;
       for(int dim=coord.size()-1; dim>=0; dim--)
       {
-        if (coord[dim] > last_inserted_coordinate_[x])
+        if (coord[dim] > last_inserted_coordinate_[dim])
         {
           strictly_greater = 1;
           break;
@@ -332,7 +333,7 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
     }
     boost::archive::text_iarchive ia(ifs);
     ia >> (*this);
-    FixupSize();
+    TrimFat();
   }
 };
 
@@ -347,39 +348,13 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
 
   void Init()
   {
-    filename_ = Traceable::name_ + ".out.txt";
-    ref_filename_ = Traceable::name_ + ".ref.txt";
+    filename_ = name_ + ".out.txt";
+    ref_filename_ = name_ + ".ref.txt";
 
-    AddOption(&filename_, "tensor_" + Traceable::name_ + "_file", "Output datafile name for CompressedTensorOut " + Traceable::name_);
-    AddOption(&ref_filename_, "ref_" + Traceable::name_ + "_file", "Reference datafile name for CompressedTensorOut " + Traceable::name_);
+    AddOption(&filename_, "tensor_" + name_ + "_file", "Output datafile name for CompressedTensorOut " + name_);
+    AddOption(&ref_filename_, "ref_" + name_ + "_file", "Reference datafile name for CompressedTensorOut " + name_);
     
     need_output.push_back(this);
-  }
-
- public:
-  
-  explicit TensorOut(const std::string& nm) :
-    Tensor(nm), Traceable(nm)
-  {
-    Init();
-  }
-  
-  TensorOut(const std::vector<int>& dim_sizes, int (*init_func)(const std::vector<int>& idxs), const std::string& nm) :
-    Tensor(dim_sizes, init_func, nm), Traceable(nm)
-  {
-    Init();
-  }
-  
-  TensorOut(const std::vector<int>& dim_sizes, const int& init_val, const std::string& nm) :
-    Tensor(dim_sizes, init_val, nm), Traceable(nm)
-  {
-    Init();
-  }
-  
-  explicit TensorOut(const std::vector<int>& dim_sizes, const std::string& nm = "") :
-    Tensor(dim_sizes, nm), Traceable(nm)
-  {
-    Init();
   }
   
   void DumpOutput()
@@ -391,11 +366,13 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
   
   void CheckOutput()
   {
-    TensorIn ref_in{Traceable::name_};
+    /* 
+    TODO: Write this
+    CompressedTensorIn ref_in{name_};
     ref_in.filename_ = ref_filename_;
     ref_in.ReadInput(true);
     
-    user_tracer_.T(1) << "Beginning to check TensorOut " << Traceable::name_ << " against reference data." << EndT;
+    user_tracer_.T(1) << "Beginning to check CompressedTensorOut " << name_ << " against reference data." << EndT;
     
     user_tracer_.ASSERT_WARNING(ref_in.dim_sizes_.size() == dim_sizes_.size()) << "Number of dimensions mismatch versus reference tensor. Ref: " << ref_in.dim_sizes_.size() << ", This: " << ref_in.dim_sizes_.size() << EndT;
 
@@ -421,6 +398,7 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
     }
     
     user_tracer_.T(0) << "Reference check done." << EndT;
+    */
   }
 };
 

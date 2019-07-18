@@ -71,7 +71,7 @@ void LogComputeTopology(std::ostream& ofile, int num_tensors);
 namespace buff
 {
 
-int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int max_spatial_partitions );
+int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int num_spatial_partitions );
 
 class TraceableBuffer : public Traceable
 {
@@ -880,12 +880,12 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const int& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), max_spatial_partitions );
-    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
 
     IncrStat("Tensor updates");
     UINT64 idx = FlattenIndices(idxs);
@@ -895,10 +895,10 @@ class PrimTensor : public StatsCollection
     buffer_to_access->Update(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& max_spatial_partitions = 0, const int& port_idx = 0)
+  int Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), max_spatial_partitions );      
-    int local_spatial_idx = spatial_part_idx % (max_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );      
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
 
     IncrStat("Tensor reads");
     UINT64 idx = FlattenIndices(idxs);
@@ -1120,38 +1120,45 @@ class ExecutionContext
   std::deque<std::pair<int, int>> partition_stack_{};
   // These are stored flattened (meaning expanded across all nested s_fors)
   int current_spatial_partition_ = 0;
-  int max_spatial_partitions_ = 1;
+  int num_spatial_partitions_ = 1;
     
   void BeginSpatialPartitioning(int num_partitions)
   {
     partition_stack_.push_back({current_spatial_partition_, num_partitions});
-    if (num_partitions == 1) return;
+    current_spatial_partition_ *= num_partitions;
+    num_spatial_partitions_ *= num_partitions;
+  }
+/*
     // Find the absolute id in the space using an equation of this form:
     // x3 * X2 * X1 * X0 + x2 * X1 * X0 + x1 * X0 + x0
     // Note that x0 == 0 here since we are starting this dimension.
     int current_base = 0;
     for (auto it = partition_stack_.begin(); it != partition_stack_.end(); it++)
     {
-      int expansion_factor = (*it).second;
+      int expansion_factor = 1;
+      std::cout << "SP: Starting expansion factor: " << expansion_factor << std::endl;
       for (auto it2 = it+1; it2 != partition_stack_.end(); it2++)
       {
         expansion_factor *= (*it2).second;
+        std::cout << "SP:   Expanded expansion factor: " << expansion_factor  << std::endl;
       }
       current_base += (*it).first * expansion_factor;
+      std::cout << "SP: Updated base: " << current_base << ", " << (*it).first << std::endl;
     }
     if( num_partitions == 0 ) 
     {
         std::cout<<"Why is num partitions zero?"<<std::endl;
         exit(0);
     }
-    max_spatial_partitions_ *= num_partitions;
+    std::cout << "SP: Current base is now: " << current_base << std::endl;
+    num_spatial_partitions_ *= num_partitions;
     current_spatial_partition_ = current_base;
   }
-  
+  */
   void EndSpatialPartitioning()
   {
     current_spatial_partition_ = partition_stack_.back().first;
-    max_spatial_partitions_ /= partition_stack_.back().second;
+    num_spatial_partitions_ /= partition_stack_.back().second;
     partition_stack_.pop_back();
   }
 
@@ -1165,9 +1172,9 @@ class ExecutionContext
     return current_spatial_partition_;
   }
 
-  int MaxSpatialPartitions()
+  int NumSpatialPartitions()
   {
-    return max_spatial_partitions_;
+    return num_spatial_partitions_;
   }
 };
 
@@ -1262,7 +1269,7 @@ class TensorAccess : public Expression
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
     compute_logs[tile_level_][ctx.CurrentSpatialPartition()]->LogInputTensor(target_.id_);
-    return target_.Access(v, tile_level_, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
+    return target_.Access(v, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
   }
 };
 
@@ -1516,7 +1523,7 @@ class TensorAssignment : public Statement
     int res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
-    target_.Update(vidxs, res, tile_level_, ctx.CurrentSpatialPartition(), ctx.MaxSpatialPartitions(), port_);
+    target_.Update(vidxs, res, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
     // TODO: Capture multicasting to datapaths.
     compute_logs[tile_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
     T(4) << "Done: tensor assignment." << EndT;
@@ -1580,7 +1587,7 @@ class Flush : public Statement
     
     int num_buffs  = buffs_->size();
 
-    auto buf_id  = whoop::buff::GetBufIndex( ctx.CurrentSpatialPartition(), num_buffs, ctx.MaxSpatialPartitions() );
+    auto buf_id  = whoop::buff::GetBufIndex( ctx.CurrentSpatialPartition(), num_buffs, ctx.NumSpatialPartitions() );
     
     (*buffs_)[buf_id]->FlushBuffet();
     
