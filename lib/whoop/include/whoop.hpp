@@ -339,9 +339,27 @@ class Program
   // Execute the program after the syntax tree has been constructed.
   
   void Run()
-  {
+  { 
+    // Add an s_for = 0..1 around the whole thing...
+    ast::PrimVar* v = new ast::PrimVar("__root");
+    ast::Constant* init_expr = new ast::Constant(0);
+    ast::VarAssignment* init_s = new ast::VarAssignment(*v, init_expr);
+    // The test is always less-than.
+    ast::VarAccess* test_v = new ast::VarAccess(*v);
+    ast::Constant* end_expr = new ast::Constant(1);
+    ast::BinaryOp* test_e = new ast::BinaryOp(LTOp, test_v, end_expr);
+    // The increment is always by 1.
+    ast::VarAccess* incr_v = new ast::VarAccess(*v);
+    ast::Constant* incr_c = new ast::Constant(1);
+    ast::BinaryOp* incr_e = new ast::BinaryOp(PlusOp, incr_v, incr_c);
+    ast::VarAssignment* incr_s = new ast::VarAssignment(*v, incr_e);
+    // Now put it all together.
+    ast::SpatialFor* wrap_stmt = new ast::SpatialFor(1, init_s, test_e, incr_s);
+    wrap_stmt->inner_ = beginning_stmt_;
+    
     ast::ExecutionContext ctx;
-    beginning_stmt_->Execute(ctx);
+    wrap_stmt->Execute(ctx);
+    delete wrap_stmt;
   }
   
   void SetName(const std::string& nm)
@@ -531,19 +549,21 @@ class TensorDisambiguator : public Container
   ast::PrimTensor& target_;
   std::list<ast::Expression*> idx_exprs_;
   int tile_level_ = 0;
+  int compute_level_ = 0;
   int port_ = 0;
 
-  TensorDisambiguator(ast::PrimTensor& v, const std::list<ast::Expression*>& e, int tile_level, int port = 0) : 
+  TensorDisambiguator(ast::PrimTensor& v, const std::list<ast::Expression*>& e, int tile_level, int compute_level, int port = 0) : 
     target_(v), 
     idx_exprs_(e),
     tile_level_(tile_level),
+    compute_level_(compute_level),
     port_(port)
   {
   }
  
   ast::TensorAccess* ToTensorAccess() const
   {
-    ast::TensorAccess* access_e = new ast::TensorAccess(target_, idx_exprs_, tile_level_, port_);
+    ast::TensorAccess* access_e = new ast::TensorAccess(target_, idx_exprs_, tile_level_, compute_level_, port_);
     return access_e;
   }
 
@@ -554,7 +574,7 @@ class TensorDisambiguator : public Container
 
   virtual ast::Statement* ToAssignment(ast::Expression* body_e)
   {
-    ast::TensorAssignment* assign_stmt = new ast::TensorAssignment(target_, idx_exprs_, body_e, tile_level_, port_);
+    ast::TensorAssignment* assign_stmt = new ast::TensorAssignment(target_, idx_exprs_, body_e, tile_level_, compute_level_, port_);
     return assign_stmt;
   }
 
@@ -644,7 +664,7 @@ class Tensor : public ast::PrimTensor
   
   TensorDisambiguator operator[](TreeBuilder idx_expr)
   {
-    TensorDisambiguator vd(*this, {idx_expr.expr_}, current_tile_level[id_][port_], port_);
+    TensorDisambiguator vd(*this, {idx_expr.expr_}, current_tile_level[id_][port_], current_global_tile_level, port_);
     return vd;
   }
 
@@ -677,7 +697,7 @@ class Tensor : public ast::PrimTensor
     AddTileLevel(size);
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 1, int granularity = 1, int port = 0)
+  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
   {
       
     user_tracer_.ASSERT(size > 0) << "AddTileLevel(): size must be greater than 0." << EndT;
@@ -906,7 +926,7 @@ class TensorPort
   
   TensorDisambiguator operator[](TreeBuilder idx_expr)
   {
-    TensorDisambiguator vd(*target_, {idx_expr.expr_}, current_tile_level[target_->id_][port_], port_);
+    TensorDisambiguator vd(*target_, {idx_expr.expr_}, current_tile_level[target_->id_][port_], current_global_tile_level, port_);
     return vd;
   }
 
@@ -928,7 +948,7 @@ class TensorPort
     return this->operator[](TreeBuilder(body_e));
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 1, int granularity = 1)
+  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1)
   {
     target_->AddTileLevel(size, shrink_granularity, granularity, port_);
   }

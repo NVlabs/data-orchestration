@@ -99,7 +99,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     int index_ = -1;
     std::bitset<64> receiver_mask_ = 0;
     std::bitset<64> updater_mask_ = 0;
-    bool caused_evict_ = false;
+    bool is_last_access_ = false;
     bool is_dirty_ = false;
   };
   activity::BuffetCommandLog command_log_;
@@ -128,46 +128,66 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     {
       if ((*it).first == address) break;
     }
-    if (it != end_it)
-    {
-      assert(requestor_idx < 64);
-      // Don't coalesce your own requests. Can't multicast to yourself!
-      if (!is_update && (*it).second.receiver_mask_[requestor_idx])
-      {
-        return false;
-      }
-      (*it).second.receiver_mask_[requestor_idx] = true;
-      if (is_update)
-      {
-        // For now, don't coalesce more than one update per updater on at a time....
-        if ((*it).second.updater_mask_[requestor_idx])
-        {
-          return false;
-        }
-        (*it).second.updater_mask_[requestor_idx] = true;
-        (*it).second.is_dirty_ = true;
-      }
-      return true;
-    }
-    else
+    
+    // Nothing to coalesce onto.
+    if (it == end_it)
     {
       return false;
     }
+
+    // Don't coalesce onto requests that are out-of-order for your request 
+    // stream. NOTE: This is a very easy, greedy heuristic, but is very
+    // conservative and may miss multicast opportunities compared to if
+    // we were willing to re-do the interleaving of request streams.
+    // However this heuristic will always allow forward progress and
+    // never introduce a deadlock.
+    for (auto it2 = it.base() ; it2 != coalescing_buffer_.end(); it2++)
+    {
+      if (!is_update && (*it2).second.receiver_mask_[requestor_idx])
+      {
+        return false;
+      }
+    }
+    
+    // We only support a multicast bitmask of up to 64.
+    ASSERT(requestor_idx < 64) << "Multicast bitmask limit of 64 exceeded at index: " << requestor_idx << ", consider using AddTileLevel() to add intermediate buffers." << EndT;
+
+    // Don't coalesce your own requests. Can't multicast to yourself!
+    if (!is_update && (*it).second.receiver_mask_[requestor_idx])
+    {
+      return false;
+    }
+
+    // Mark this party as a receiver.
+    (*it).second.receiver_mask_[requestor_idx] = true;
+
+    if (is_update)
+    {
+      // For now, don't coalesce more than one update per updater on at a time....
+      if ((*it).second.updater_mask_[requestor_idx])
+      {
+        return false;
+      }
+      // Mark this party as an updater, and the data as modified (if not already).
+      (*it).second.updater_mask_[requestor_idx] = true;
+      (*it).second.is_dirty_ = true;
+    }
+    // Succesful coalesce!
+    return true;
   }
   
-  BuffetLogInfo* LogAccess(int address, int requestor_idx, bool caused_evict, int index = -1)
+  BuffetLogInfo* LogAccess(int address, int requestor_idx, int index = -1)
   {
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = index;
     assert(requestor_idx < 64);
     info.receiver_mask_[requestor_idx] = true;
-    info.caused_evict_ = caused_evict;
     coalescing_buffer_.push_back(std::make_pair(address, info));
     return &coalescing_buffer_.back().second;
   }
 
-  BuffetLogInfo* LogUpdate(int address, int requestor_idx, bool caused_evict, int index = -1)
+  BuffetLogInfo* LogUpdate(int address, int requestor_idx, int index = -1)
   {
     T(4) << "Logging implicit RMW to address: " << address << " by requestor: " << requestor_idx << EndT;
     // Keep track of last accessed address.
@@ -176,7 +196,6 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     assert(requestor_idx < 64);
     info.receiver_mask_[requestor_idx] = true;
     info.updater_mask_[requestor_idx] = true;
-    info.caused_evict_ = caused_evict;
     info.is_dirty_ = true;
     coalescing_buffer_.push_back(std::make_pair(address, info));
     return &coalescing_buffer_.back().second;
@@ -233,20 +252,6 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   {
     if (!options::kShouldLogActivity) return;
 
-    // Record any shrinks.
-    if (info.caused_evict_)
-    {
-      if (info.is_dirty_)
-      {
-        command_log_.SetModified(); // XXX This is not quite right... it should be that the evicted line was dirty... this is a bit of a hack...
-      }
-      
-      // Log the shrink.
-      command_log_.Shrink();
-      shrink_pgen_log_.Shrink();
-      num_shrinks_++;
-    }
-
     // Record accces.
     command_log_.Read(info.is_dirty_);
     //T(0) << "Record: " << address << ", " << command_log_.GetRelativeIndex(info.index_) << ", " << info.index_ << EndT;
@@ -262,6 +267,21 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       int final_mask = info.updater_mask_.to_ulong();
       updaters_pgen_log_.Send(final_mask == 0 ? 1 : final_mask);
     }
+
+    // Record any shrinks (after, so as not to mess with the indexing).
+    if (info.is_last_access_)
+    {
+      if (info.is_dirty_)
+      {
+        command_log_.SetModified();
+      }
+      
+      // Log the shrink.
+      command_log_.Shrink();
+      shrink_pgen_log_.Shrink();
+      num_shrinks_++;
+    }
+
   }
 
  public:
@@ -439,7 +459,7 @@ class OffChipBufferModel : public BufferModel
       CheckRowBufferHit(address);
       IncrStat("Offchip reads");
       T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
-      LogAccess(address, requestor_idx, false, address);
+      LogAccess(address, requestor_idx, address);
       TryToDrainOldestAccesses();
     }
   }
@@ -457,7 +477,7 @@ class OffChipBufferModel : public BufferModel
 
       IncrStat("Offchip updates");
       T(4) << "Update, address: " << address  << " by requestor: " << requestor_idx << EndT;
-      LogUpdate(address, requestor_idx, false, address);
+      LogUpdate(address, requestor_idx, address);
       TryToDrainOldestAccesses();
     }
   }
@@ -488,7 +508,7 @@ class AssociativeBufferModel : public BufferModel
   {
    public:
     bool modified_ = false;
-    std::list<BuffetLogInfo*> accesses_{};
+    std::deque<BuffetLogInfo*> accesses_{};
   };
   std::unordered_map<int, EntryInfo> presence_info_;
   std::list<int> lru_cache_; // list occupancy should never exceed size_. Back = least recently used.
@@ -553,6 +573,11 @@ class AssociativeBufferModel : public BufferModel
     for (auto access : victim.accesses_)
     {
       access->index_ = slot;
+    }
+    // Mark the last access so we can send a shrink.
+    if (victim.accesses_.size() > 0)
+    {
+      victim.accesses_.back()->is_last_access_ = true;
     }
 
     // Check if the above completed any of the oldest accesses.
@@ -619,7 +644,7 @@ class AssociativeBufferModel : public BufferModel
       // insert into unordered_map with default info (e.g., clean)
       presence_info_[address] = EntryInfo();
     }
-    presence_info_[address].accesses_.push_back(LogAccess(address, requestor_idx, caused_evict));
+    presence_info_[address].accesses_.push_back(LogAccess(address, requestor_idx));
   }
 
   // Note that the address coming in is just the index within the tensor, not
@@ -669,7 +694,7 @@ class AssociativeBufferModel : public BufferModel
       presence_info_[address] = EntryInfo();
       presence_info_[address].modified_ = true;
     }
-    presence_info_[address].accesses_.push_back(LogUpdate(address, requestor_idx, caused_evict));
+    presence_info_[address].accesses_.push_back(LogUpdate(address, requestor_idx));
     command_log_.SetModified();
   }
 
@@ -1117,64 +1142,68 @@ class PrimTensor : public StatsCollection
 class ExecutionContext
 {
  public:
-  std::deque<std::pair<int, int>> partition_stack_{};
-  // These are stored flattened (meaning expanded across all nested s_fors)
-  int current_spatial_partition_ = 0;
-  int num_spatial_partitions_ = 1;
+  class PartitionContext
+  {
+   public:
+    // These are stored flattened (meaning expanded across all nested s_fors)
+    int current_spatial_partition_ = 0;
+    int num_spatial_partitions_ = 1;
+    std::bitset<64> paused_partition_mask_ = 0;
+  };
+  std::deque<PartitionContext> partition_stack_{};
+  PartitionContext active_;
+  
     
   void BeginSpatialPartitioning(int num_partitions)
   {
-    partition_stack_.push_back({current_spatial_partition_, num_partitions});
-    current_spatial_partition_ *= num_partitions;
-    num_spatial_partitions_ *= num_partitions;
+    // Copy the current info and save it.
+    partition_stack_.push_back(active_);
+    // Update the current info.
+    active_.current_spatial_partition_ *= num_partitions;
+    active_.num_spatial_partitions_ *= num_partitions;
+    active_.paused_partition_mask_.reset();
   }
-/*
-    // Find the absolute id in the space using an equation of this form:
-    // x3 * X2 * X1 * X0 + x2 * X1 * X0 + x1 * X0 + x0
-    // Note that x0 == 0 here since we are starting this dimension.
-    int current_base = 0;
-    for (auto it = partition_stack_.begin(); it != partition_stack_.end(); it++)
-    {
-      int expansion_factor = 1;
-      std::cout << "SP: Starting expansion factor: " << expansion_factor << std::endl;
-      for (auto it2 = it+1; it2 != partition_stack_.end(); it2++)
-      {
-        expansion_factor *= (*it2).second;
-        std::cout << "SP:   Expanded expansion factor: " << expansion_factor  << std::endl;
-      }
-      current_base += (*it).first * expansion_factor;
-      std::cout << "SP: Updated base: " << current_base << ", " << (*it).first << std::endl;
-    }
-    if( num_partitions == 0 ) 
-    {
-        std::cout<<"Why is num partitions zero?"<<std::endl;
-        exit(0);
-    }
-    std::cout << "SP: Current base is now: " << current_base << std::endl;
-    num_spatial_partitions_ *= num_partitions;
-    current_spatial_partition_ = current_base;
-  }
-  */
+
   void EndSpatialPartitioning()
   {
-    current_spatial_partition_ = partition_stack_.back().first;
-    num_spatial_partitions_ /= partition_stack_.back().second;
+    // Restore the old info.
+    active_ = partition_stack_.back();
     partition_stack_.pop_back();
   }
 
   void NextSpatialPartition()
   {
-    current_spatial_partition_++;
+    active_.current_spatial_partition_++;
   } 
 
   int CurrentSpatialPartition()
   {
-    return current_spatial_partition_;
+    return active_.current_spatial_partition_;
   }
 
   int NumSpatialPartitions()
   {
-    return num_spatial_partitions_;
+    return active_.num_spatial_partitions_;
+  }
+
+  void RestartCurrentPartitions()
+  {
+    active_.current_spatial_partition_ = partition_stack_.back().current_spatial_partition_ * partition_stack_.back().num_spatial_partitions_;
+  }
+  
+  bool CurrentPartitionIsPaused()
+  {
+    return active_.paused_partition_mask_[active_.current_spatial_partition_];
+  }
+  
+  bool AnyPartitionIsPaused()
+  {
+    return active_.paused_partition_mask_.any();
+  }
+  
+  void SetCurrentParitionPauseStatus(bool b)
+  {
+    active_.paused_partition_mask_[active_.current_spatial_partition_] = b;
   }
 };
 
@@ -1243,12 +1272,13 @@ class TensorAccess : public Expression
 
   PrimTensor& target_;
   std::list<Expression*> idx_exprs_;
+  int compute_level_ = 0;
   int tile_level_ = 0;
   int port_ = 0;
   
   TensorAccess(PrimTensor& v) : target_(v) {}
 
-  TensorAccess(PrimTensor& v, const std::list<Expression*>& e, const int tile_level, const int port = 0) : target_(v), idx_exprs_(e), tile_level_(tile_level), port_(port) {}
+  TensorAccess(PrimTensor& v, const std::list<Expression*>& e, const int tile_level, const int compute_level, const int port = 0) : target_(v), idx_exprs_(e), tile_level_(tile_level), compute_level_(compute_level), port_(port) {}
 
   virtual std::shared_ptr<timewhoop::Expression> ConvertExpression()
   {
@@ -1268,7 +1298,7 @@ class TensorAccess : public Expression
   {
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
-    compute_logs[tile_level_][ctx.CurrentSpatialPartition()]->LogInputTensor(target_.id_);
+    compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogInputTensor(target_.id_);
     return target_.Access(v, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
   }
 };
@@ -1412,11 +1442,16 @@ class Statement : public ExecTraceable
     return converted_statement;
   }
   
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     if (next_)
     {
-      next_->Execute(ctx);
+      return next_->Execute(ctx);
+    }
+    else
+    {
+      // We did our last statment. We are done...
+      return false;
     }
   }
 
@@ -1453,7 +1488,7 @@ class VarAssignment : public Statement
     return converted_statement;
   }
 
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     T(4) << "Entering: variable assignment." << EndT;
     if (body_)
@@ -1463,7 +1498,7 @@ class VarAssignment : public Statement
       target_.Update(res);
     }
     T(4) << "Done: variable assignment." << EndT;
-    Statement::Execute(ctx);
+    return Statement::Execute(ctx);
   }
 };
 
@@ -1475,6 +1510,7 @@ class TensorAssignment : public Statement
   std::list<Expression*> idx_exprs_;
   Expression* body_ = NULL;
   int tile_level_ = 0;
+  int compute_level_ = 0;
   int port_ = 0;
   
   TensorAssignment(PrimTensor& t) : 
@@ -1487,8 +1523,8 @@ class TensorAssignment : public Statement
   {
   }
 
-  TensorAssignment(PrimTensor& t, const std::list<Expression*> idx_e, Expression* body_e, const int& tile_level, const int& port = 0) : 
-    target_(t), idx_exprs_(idx_e), body_(body_e), tile_level_(tile_level), port_(port)
+  TensorAssignment(PrimTensor& t, const std::list<Expression*> idx_e, Expression* body_e, const int& tile_level, const int& compute_level, const int& port = 0) : 
+    target_(t), idx_exprs_(idx_e), body_(body_e), tile_level_(tile_level), compute_level_(compute_level), port_(port)
   {
   }
 
@@ -1516,7 +1552,7 @@ class TensorAssignment : public Statement
   }
 
   
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     T(4) << "Entering: tensor assignment." << EndT;
     auto idxs = EvaluateAll(idx_exprs_, ctx);
@@ -1525,9 +1561,9 @@ class TensorAssignment : public Statement
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
     target_.Update(vidxs, res, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
     // TODO: Capture multicasting to datapaths.
-    compute_logs[tile_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
+    compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
     T(4) << "Done: tensor assignment." << EndT;
-    Statement::Execute(ctx);
+    return Statement::Execute(ctx);
   }
 };
 
@@ -1536,6 +1572,10 @@ class While : public Statement
 {
  public:
   Expression* test_expr_;
+
+  bool started_ = false;
+  bool loop_done_; // Dones are DONTCARE when !started_
+  bool body_done_;
   
   While(Expression* test_e) :
     test_expr_(test_e)
@@ -1547,18 +1587,74 @@ class While : public Statement
       assert(0);
   }
   
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
-    T(4) << "Entering: while loop." << EndT;
-    while (test_expr_->Evaluate(ctx))
+    // If this is our first time, initialize.
+    if (!started_)
     {
-      if (inner_)
+      T(4) << "Entering: temporal while-loop." << EndT;
+      started_ = true;
+      loop_done_ = false;
+      body_done_ = true;
+    }
+    else if (!loop_done_ && body_done_)
+    {
+      T(4) << "Re-entering: temporal while-loop." << EndT;
+    }
+    
+    // If this loop's body was not done, just jump to it until it is done.
+    if (!body_done_)
+    {
+      T(4) << "Bypassing: temporal while-loop." << EndT;
+      body_done_ = !inner_->Execute(ctx);
+      if (body_done_)
       {
-        inner_->Execute(ctx);
+        T(4) << "Pausing: temporal while-loop." << EndT;
+      }
+      // We always need to go again in this state... indicate this by returning true.
+      return true;
+    }
+    
+    // If this loop was previously finished, just move on...
+    if (!loop_done_)
+    {
+      // See if we need more iterations    
+      loop_done_ = !test_expr_->Evaluate(ctx);
+      if (!loop_done_)
+      {
+        // Do body
+        if (inner_)
+        {
+          // If the body isn't done then we should just keep doing it
+          // until it is done.
+          body_done_ = !inner_->Execute(ctx);
+          // If the body is not done, don't do anything else. 
+          // Just pause and come back to it later.
+          if (!body_done_) 
+          {
+            T(4) << "Beginning to bypass: temporal while-loop." << EndT;
+            return true;
+          }
+        }
+        // Remember that we may have more to do...
+        // Come back to finish later by returning true to mean "not done"      
+        T(4) << "Pausing: temporal while-loop." << EndT;
+        return true;
+      }
+      else
+      {
+        T(4) << "Done: temporal while-loop." << EndT;
       }
     }
-    T(4) << "Done: while loop." << EndT;
-    Statement::Execute(ctx);
+    // Move on to the next statement (if any)
+    // When they are all done, I reset myself and am ready to go again.
+    bool next_is_active = Statement::Execute(ctx);
+    if (!next_is_active)
+    {
+      T(4) << "Resetting: temporal for-loop." << EndT;
+      started_ = false;
+    }
+    return next_is_active;
   }
 };
 
@@ -1578,11 +1674,11 @@ class Flush : public Statement
       buffs_      = buffs_in;
   }
 
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     T(4) << "Entering: Flush Buffer." << EndT;
     T(4) << "  Tensor: "<<tensor_ptr_->name_<< EndT;
-    T(4) << "  Spatial Partition: "<<ctx.current_spatial_partition_<< EndT;
+    T(4) << "  Spatial Partition: "<<ctx.CurrentSpatialPartition()<< EndT;
 
     
     int num_buffs  = buffs_->size();
@@ -1592,7 +1688,7 @@ class Flush : public Statement
     (*buffs_)[buf_id]->FlushBuffet();
     
     T(4) << "Done: Flush Bufer." << EndT;
-    Statement::Execute(ctx);
+    return Statement::Execute(ctx);
   }
 };
 
@@ -1602,6 +1698,9 @@ class TemporalFor : public Statement
   Statement* init_stmt_;
   Expression* test_expr_;
   Statement* incr_stmt_;
+  bool started_ = false;
+  bool loop_done_; // Dones are DONTCARE when !started_
+  bool body_done_;
   
   TemporalFor(Statement* init_s, Expression* test_e, Statement* incr_s) :
     init_stmt_(init_s),
@@ -1630,18 +1729,79 @@ class TemporalFor : public Statement
     return converted_statement;
   }
   
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
-    T(4) << "Entering: temporal for-loop." << EndT;
-    for (init_stmt_->Execute(ctx); test_expr_->Evaluate(ctx); incr_stmt_->Execute(ctx))
+    // If this is our first time, initialize.
+    if (!started_)
     {
-      if (inner_)
+      T(4) << "Entering: temporal for-loop." << EndT;
+      started_ = true;
+      loop_done_ = false;
+      body_done_ = true;
+      init_stmt_->Execute(ctx); 
+    }
+    else if (!loop_done_ && body_done_)
+    {
+      T(4) << "Re-entering: temporal for-loop." << EndT;
+    }
+    
+    // If this loop's body was not done, just jump to it until it is done.
+    if (!body_done_)
+    {
+      T(4) << "Bypassing: temporal for-loop." << EndT;
+      body_done_ = !inner_->Execute(ctx);
+      if (body_done_)
       {
-        inner_->Execute(ctx);
+        // Do post-body statement.
+        incr_stmt_->Execute(ctx);
+        T(4) << "Pausing: temporal for-loop." << EndT;
+      }
+      // We always need to go again in this state... indicate this by returning true.
+      return true;
+    }
+    
+    // If this loop was previously finished, just move on...
+    if (!loop_done_)
+    {
+      // See if we need more iterations    
+      loop_done_ = !test_expr_->Evaluate(ctx);
+      if (!loop_done_)
+      {
+        // Do body
+        if (inner_)
+        {
+          // If the body isn't done then we should just keep doing it
+          // until it is done.
+          body_done_ = !inner_->Execute(ctx);
+          // If the body is not done, don't do anything else. 
+          // Just pause and come back to it later.
+          if (!body_done_) 
+          {
+            T(4) << "Beginning to bypass: temporal for-loop." << EndT;
+            return true;
+          }
+        }
+        // Do post-body statement.
+        incr_stmt_->Execute(ctx);
+        // Remember that we may have more to do...
+        // Come back to finish later by returning true to mean "not done"      
+        T(4) << "Pausing: temporal for-loop." << EndT;
+        return true;
+      }
+      else
+      {
+        T(4) << "Done: temporal for-loop." << EndT;
       }
     }
-    T(4) << "Done: temporal for-loop." << EndT;
-    Statement::Execute(ctx);
+    // Move on to the next statement (if any)
+    // When they are all done, I reset myself and am ready to go again.
+    bool next_is_active = Statement::Execute(ctx);
+    if (!next_is_active)
+    {
+      T(4) << "Resetting: temporal for-loop." << EndT;
+      started_ = false;
+    }
+    return next_is_active;
   }
 
   virtual void PrependToName(const std::string& p) 
@@ -1688,21 +1848,44 @@ class SpatialFor : public Statement
   }
 
  
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     T(4) << "Entering: spatial for-loop: " << num_partitions_ << EndT;
+    
     ctx.BeginSpatialPartitioning(num_partitions_);
+
     for (init_stmt_->Execute(ctx); test_expr_->Evaluate(ctx); incr_stmt_->Execute(ctx))
     {
       if (inner_)
-      {
-        inner_->Execute(ctx);
+      {      
+        T(4) << "Entering: spatial partition: " << ctx.CurrentSpatialPartition() << EndT;
+        ctx.SetCurrentParitionPauseStatus(inner_->Execute(ctx));
       }
       ctx.NextSpatialPartition();
     }
+    
+    // If any partitions still have unfinished work, finish it now.
+    while (ctx.AnyPartitionIsPaused())
+    {
+      ctx.RestartCurrentPartitions();
+      // Go over all the partitions than just the paused ones because
+      // they may reference the variables altered by this for-loop.
+      for (init_stmt_->Execute(ctx); test_expr_->Evaluate(ctx); incr_stmt_->Execute(ctx))
+      {
+        // Only actually descend into the paused ones.
+        if (inner_ && ctx.CurrentPartitionIsPaused())
+        {      
+          T(4) << "Resuming: spatial partition: " << ctx.CurrentSpatialPartition() << EndT;
+          ctx.SetCurrentParitionPauseStatus(inner_->Execute(ctx));
+        }
+        ctx.NextSpatialPartition();
+      }
+    }
+
     ctx.EndSpatialPartitioning();
-    T(4) << "Done: temporal spatial-loop." << EndT;
-    Statement::Execute(ctx);
+
+    T(4) << "Done: spatial for-loop." << EndT;
+    return Statement::Execute(ctx);
   }
 
   virtual void PrependToName(const std::string& p) 
@@ -1751,7 +1934,7 @@ class If : public Statement
   }
 
   
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     T(4) << "Entering: dynamic if." << EndT;
     int res = test_expr_->Evaluate(ctx);
@@ -1780,12 +1963,12 @@ class If : public Statement
     {
       if (else_->next_)
       {
-        else_->next_->Execute(ctx);
+        return else_->next_->Execute(ctx);
       }
     }
     else
     {
-      Statement::Execute(ctx);
+      return Statement::Execute(ctx);
     }
   }
 };
@@ -1811,7 +1994,7 @@ class Else : public Statement
     return converted_statement;
   }
 
-  virtual void Execute(ExecutionContext& ctx)
+  virtual bool Execute(ExecutionContext& ctx)
   {
     T(4) << "Entering: else." << EndT;
     if (inner_)
@@ -1821,6 +2004,7 @@ class Else : public Statement
     T(4) << "Done: else." << EndT;
     // Note: we explicitly don't call Statement::Execute(ctx) here.
     // It will be called through ExecuteNext
+    return false; // We are done.
   }
 };
 
