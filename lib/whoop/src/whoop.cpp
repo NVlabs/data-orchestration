@@ -145,8 +145,18 @@ void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
     // do a sanity check that the new sequential loops are consistent. 
     bool is_consistent = spatial_partition_levels_sanity_check[height] == end_const;
     user_tracer_.ASSERT(is_consistent) << "Inconsistent spatial partitioning across sequential loops. Previously level " << height  << " was: " << spatial_partition_levels_sanity_check[height] << ", now it is: " << end_const << EndT;
+    
     // Just re-push, but don't re-mutate anything.
     spatial_partition_levels.push_back(std::make_pair(stmt, end_const));
+    // If I'm not the last "old" s_for...
+    if (height != spatial_partition_levels_sanity_check.size() - 1)
+    {
+      // Fixup our expansion factor by any "future" s_fors we know are coming.
+       for (auto it = spatial_partition_levels_sanity_check.begin() + height + 1; it != spatial_partition_levels_sanity_check.end(); it++)
+      {
+        stmt->flat_expansion_factor_ *= (*it);
+      }
+    }
   }
 }
 
