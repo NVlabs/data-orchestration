@@ -103,7 +103,7 @@ namespace ast
 std::string ShowIndices(const std::vector<int>& idxs)
 {
   std::ostringstream ostr;
-  for (auto it = idxs.rbegin(); it != idxs.rend(); it++)
+  for (auto it = idxs.begin(); it != idxs.end(); it++)
   {
     ostr << "[";
     ostr << std::to_string(*it);

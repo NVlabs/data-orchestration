@@ -28,9 +28,10 @@
 # Stop on errors
 set -e
 # build the executable
-scons -u -Q
+scons -u -Q debug=1
 
-executable=./matrix-multiply-3level-parallel-kmn.bin
+executable="./matrix-multiply-3level-parallel-kmn.bin"
+#executable="gdb --args ./matrix-multiply-3level-parallel-kmn.bin"
 
 if [ $# -eq 2 ]; then
     afile=$1

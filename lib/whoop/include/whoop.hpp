@@ -198,7 +198,7 @@ class TreeBuilder;
 // Global variable to hold the current partitioning.
 // We use a stack so we can add to it as we traverse loops.
 // (Implemented as a deque so we can get an iterator to it.)
-extern std::deque<int> spatial_partition_levels;
+extern std::deque<std::pair<ast::SpatialFor*, int>> spatial_partition_levels;
 
 // tile level tracking
 // Global variable to hold the current tile level for each tensor,
@@ -217,6 +217,7 @@ extern std::vector<int> tile_level_spatial_expansions;
 
 
 int NumSpatialPartitionsFlattened();
+int ActualSpatialPartitionHeight();
 
 class Tensor;
 class Vec;
@@ -259,6 +260,62 @@ class TensorDisambiguator;
 class TensorPort;
 
 
+void s_for(ast::PrimVar& v, const int& init_const, const int& end_const);
+//void s_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
+
+void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr);
+
+void t_for(ast::PrimVar& v, const int& init_const, TreeBuilder end_expr);
+
+void t_for(ast::PrimVar& v, TreeBuilder init_expr,   const int& end_const);
+void t_for(ast::PrimVar& v, TreeBuilder init_const,  Var& end_const);
+
+void t_for(ast::PrimVar& v, const int& init_const, const int& end_const);
+
+void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const);
+
+void t_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
+void t_for(ast::PrimVar& v,  const int& init_const,  Var& end_const);
+
+void w_while(TreeBuilder test_expr);
+
+void w_while(const int& test_const);
+    
+
+void w_if(TreeBuilder test_expr);
+
+void w_if(const int& test_const);
+
+void w_if(TreeBuilder test_expr, double exec_prob);
+
+void w_if(const int& test_const, double exec_prob);
+
+void w_else();
+
+void w_else_if(TreeBuilder test_expr);
+
+void w_else_if(TreeBuilder test_const);
+
+void end();
+
+void DumpStats();
+
+ast::Expression* ToAccess(const int& c);
+ast::Statement* ToAssignment(const int& c, ast::Expression* body_e);
+ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
+ast::Statement* ToUpdateOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
+
+void Init(int argc, char** argv);
+
+void Run();
+
+void Done();
+void Done(std::string);
+
+Tracer& T(int l = 0);
+Tracer& ASSERT(bool term);
+
+
 // A "program" is the environment in which we build up the syntax tree
 // for processing. 
 
@@ -271,6 +328,12 @@ class Program
   std::stack<ast::Statement*> loop_stack_;
   std::string name_ = "";
 
+  void AddInitialStatements();
+  
+  void AddEndStatements()
+  {
+    end();
+  }
   
   // Add
   // Add a statement to the program.
@@ -338,28 +401,15 @@ class Program
   // Run
   // Execute the program after the syntax tree has been constructed.
   
-  void Run()
-  { 
-    // Add an s_for = 0..1 around the whole thing...
-    ast::PrimVar* v = new ast::PrimVar("__root");
-    ast::Constant* init_expr = new ast::Constant(0);
-    ast::VarAssignment* init_s = new ast::VarAssignment(*v, init_expr);
-    // The test is always less-than.
-    ast::VarAccess* test_v = new ast::VarAccess(*v);
-    ast::Constant* end_expr = new ast::Constant(1);
-    ast::BinaryOp* test_e = new ast::BinaryOp(LTOp, test_v, end_expr);
-    // The increment is always by 1.
-    ast::VarAccess* incr_v = new ast::VarAccess(*v);
-    ast::Constant* incr_c = new ast::Constant(1);
-    ast::BinaryOp* incr_e = new ast::BinaryOp(PlusOp, incr_v, incr_c);
-    ast::VarAssignment* incr_s = new ast::VarAssignment(*v, incr_e);
-    // Now put it all together.
-    ast::SpatialFor* wrap_stmt = new ast::SpatialFor(1, init_s, test_e, incr_s);
-    wrap_stmt->inner_ = beginning_stmt_;
-    
-    ast::ExecutionContext ctx;
-    wrap_stmt->Execute(ctx);
-    delete wrap_stmt;
+  void Run(int num_flat_partitions)
+  {
+    ast::ExecutionContext ctx(num_flat_partitions);
+    ast::Statement* continuation = beginning_stmt_->Execute(ctx);
+    // Keep executing until nothing is paused.
+    while (continuation != NULL)
+    {
+      continuation = beginning_stmt_->Execute(ctx);
+    }
   }
   
   void SetName(const std::string& nm)
@@ -1103,61 +1153,6 @@ class VecOut : public Vec, public OutToFile, public Traceable
   }
 };
 
-
-void s_for(ast::PrimVar& v, const int& init_const, const int& end_const);
-void s_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
-
-void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr);
-
-void t_for(ast::PrimVar& v, const int& init_const, TreeBuilder end_expr);
-
-void t_for(ast::PrimVar& v, TreeBuilder init_expr,   const int& end_const);
-void t_for(ast::PrimVar& v, TreeBuilder init_const,  Var& end_const);
-
-void t_for(ast::PrimVar& v, const int& init_const, const int& end_const);
-
-void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const);
-
-void t_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
-void t_for(ast::PrimVar& v,  const int& init_const,  Var& end_const);
-
-void w_while(TreeBuilder test_expr);
-
-void w_while(const int& test_const);
-    
-
-void w_if(TreeBuilder test_expr);
-
-void w_if(const int& test_const);
-
-void w_if(TreeBuilder test_expr, double exec_prob);
-
-void w_if(const int& test_const, double exec_prob);
-
-void w_else();
-
-void w_else_if(TreeBuilder test_expr);
-
-void w_else_if(TreeBuilder test_const);
-
-void end();
-
-void DumpStats();
-
-ast::Expression* ToAccess(const int& c);
-ast::Statement* ToAssignment(const int& c, ast::Expression* body_e);
-ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
-ast::Statement* ToUpdateOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
-
-void Init(int argc, char** argv);
-
-void Run();
-
-void Done();
-void Done(std::string);
-
-Tracer& T(int l = 0);
-Tracer& ASSERT(bool term);
 /*
 class CompressedTensor
 {
