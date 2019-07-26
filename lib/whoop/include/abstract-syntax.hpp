@@ -1448,6 +1448,7 @@ class Statement : public ExecTraceable
   Statement* next_ = NULL;
   Statement* inner_ = NULL;
   Statement* else_ = NULL;
+  std::vector<Statement*> partition_continuations_;
 
   virtual std::shared_ptr<timewhoop::Statement> ConvertStatement()
   {
@@ -1473,6 +1474,67 @@ class Statement : public ExecTraceable
       // We did our last statment. We are done...
       return NULL;
     }
+  }
+  
+  virtual void Init(ExecutionContext& ctx)
+  {
+    partition_continuations_.resize(ctx.NumSpatialPartitions(), NULL);
+    if (inner_)
+    {
+      inner_->Init(ctx);
+    }
+    if (next_)
+    {
+      next_->Init(ctx);
+    }
+  }
+    
+  bool AllPartitionsDone()
+  {
+    auto it = std::find_if(partition_continuations_.begin(),
+                           partition_continuations_.end(),
+                           [](Statement* s) { return s != NULL; });
+    return it == partition_continuations_.end();
+  }
+
+  bool AnyPartitionIsPaused(int base, int num)
+  {
+    if (partition_continuations_.size() == 0) return false;
+    for (int x = base; x < base + num; x++)
+    {
+      if (partition_continuations_[x] != NULL) return true;
+    }
+    return false;
+  }
+  
+  Statement* ExecuteCurrentInner(ExecutionContext& ctx)
+  {
+    if (inner_)
+    {
+      partition_continuations_[ctx.CurrentSpatialPartition()] = inner_->Execute(ctx);
+    }
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
+  }
+  
+  Statement* ExecuteCurrentElse(ExecutionContext& ctx)
+  {
+    if (else_)
+    {
+      partition_continuations_[ctx.CurrentSpatialPartition()] = else_->Execute(ctx);
+    }
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
+  }
+
+  bool CurrentIsPaused(ExecutionContext& ctx)
+  {
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
+  }
+
+  Statement* ResumeCurrent(ExecutionContext& ctx)
+  {
+    assert(CurrentIsPaused(ctx));
+    partition_continuations_[ctx.CurrentSpatialPartition()] = partition_continuations_[ctx.CurrentSpatialPartition()]->Execute(ctx);
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
   }
 
 };
@@ -1594,9 +1656,7 @@ class While : public Statement
  public:
   Expression* test_expr_;
 
-  bool started_ = false;
-  bool loop_done_; // Dones are DONTCARE when !started_
-  bool body_done_;
+  std::vector<bool> active_;
   
   While(Expression* test_e) :
     test_expr_(test_e)
@@ -1608,75 +1668,61 @@ class While : public Statement
       assert(0);
   }
   
+  virtual void Init(ExecutionContext& ctx)
+  {
+    active_.resize(ctx.NumSpatialPartitions(), false);
+    Statement::Init(ctx);  
+  }
+
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    // If this is our first time, initialize.
-    if (!started_)
+    if (CurrentIsPaused(ctx))
     {
-      T(4) << "Entering: temporal while-loop." << EndT;
-      started_ = true;
-      loop_done_ = false;
-      body_done_ = true;
-    }
-    else if (!loop_done_ && body_done_)
-    {
-      T(4) << "Re-entering: temporal while-loop." << EndT;
-    }
-    
-    // If this loop's body was not done, just jump to it until it is done.
-    if (!body_done_)
-    {
-      T(4) << "Bypassing: temporal while-loop." << EndT;
-      body_done_ = !inner_->Execute(ctx);
-      if (body_done_)
+      T(4) << "Bypassing: while-loop." << EndT;
+      if (ResumeCurrent(ctx))
       {
-        T(4) << "Pausing: temporal while-loop." << EndT;
-      }
-      // We always need to go again in this state... indicate this by returning this
-      return this;
-    }
-    
-    // If this loop was previously finished, just move on...
-    if (!loop_done_)
-    {
-      // See if we need more iterations    
-      loop_done_ = !test_expr_->Evaluate(ctx);
-      if (!loop_done_)
-      {
-        // Do body
-        if (inner_)
-        {
-          // If the body isn't done then we should just keep doing it
-          // until it is done.
-          auto cont = inner_->Execute(ctx);
-          body_done_ = cont != NULL;
-          // If the body is not done, don't do anything else. 
-          // Just pause and come back to it later.
-          if (!body_done_) 
-          {
-            T(4) << "Beginning to bypass: temporal while-loop." << EndT;
-            return this;
-          }
-        }
-        // Remember that we may have more to do...
-        // Come back to finish later by returning true to mean "not done"      
-        T(4) << "Pausing: temporal while-loop." << EndT;
+        // It didn't finish... try again in the future...
+        T(4) << "Pausing: while-loop." << EndT;    
         return this;
       }
-      else
+    }
+    else
+    {
+      if (!active_[ctx.CurrentSpatialPartition()])
       {
-        T(4) << "Done: temporal while-loop." << EndT;
+        // We are at a beginning of a new body invocation.
+        T(4) << "Starting: while-loop." << EndT;
+      }
+
+      // See if we need more iterations
+      active_[ctx.CurrentSpatialPartition()] = test_expr_->Evaluate(ctx);
+
+      if (active_[ctx.CurrentSpatialPartition()])
+      {
+        // Invoke the body (if any)
+        T(4) << "Executing body: while-loop." << EndT;
+        if (ExecuteCurrentInner(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: while-loop." << EndT;    
+          return this;
+        }
       }
     }
-    // Move on to the next statement (if any)
-    // When they are all done, I reset myself and am ready to go again.
-    auto cont = Statement::Execute(ctx);
-    if (cont == NULL)
+    
+    if (active_[ctx.CurrentSpatialPartition()])
     {
-      T(4) << "Resetting: temporal for-loop." << EndT;
-      started_ = false;
+      // Check for more iterations next time around.
+      T(4) << "Pausing: while-loop." << EndT;    
+      return this;
     }
-    return cont;
+    else
+    {
+      T(4) << "Done: while-loop." << EndT;
+      // Move on to the next statement (if any)
+      // Note: we purposely remove ourselves from the callstack in the sequential case.
+      return Statement::Execute(ctx); 
+    }
   }
 };
 
@@ -1720,17 +1766,7 @@ class TemporalFor : public Statement
   Statement* init_stmt_;
   Expression* test_expr_;
   Statement* incr_stmt_;
-  bool initialized_ = false;
   std::vector<bool> active_;
-  std::vector<Statement*> partition_continuation_;
-  
-  bool AllPartitionsDone()
-  {
-    auto it = std::find_if(partition_continuation_.begin(),
-                           partition_continuation_.end(),
-                           [](Statement* s) { return s != NULL; });
-    return it == partition_continuation_.end();
-  }
 
   TemporalFor(Statement* init_s, Expression* test_e, Statement* incr_s) :
     init_stmt_(init_s),
@@ -1759,52 +1795,55 @@ class TemporalFor : public Statement
     return converted_statement;
   }
   
+  virtual void Init(ExecutionContext& ctx)
+  {
+    active_.resize(ctx.NumSpatialPartitions(), false);
+    Statement::Init(ctx);  
+  }
+  
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    if (!initialized_)
+    if (CurrentIsPaused(ctx))
     {
-      // If this is our *very* first time, initialize.
-      T(4) << "Initializing: temporal for-loop." << EndT;
-      active_.resize(ctx.NumSpatialPartitions(), false);
-      partition_continuation_.resize(ctx.NumSpatialPartitions(), NULL);
-      initialized_ = true;
-    }
-    
-    if (partition_continuation_[ctx.CurrentSpatialPartition()] != NULL)
-    {
-      // This partition's body was paused: just jump to it.
       T(4) << "Bypassing: temporal for-loop." << EndT;
-      partition_continuation_[ctx.CurrentSpatialPartition()] = partition_continuation_[ctx.CurrentSpatialPartition()]->Execute(ctx);
-      // We always need to go again in this state... indicate this by returning this.
-      T(4) << "Pausing: temporal for-loop." << EndT;
-      return this;
-    }
-
-    // We are at a beginning of a new body invocation.
-    if (!active_[ctx.CurrentSpatialPartition()])
-    {
-      T(4) << "Starting: temporal for-loop." << EndT;
-      init_stmt_->Execute(ctx); 
+      if (ResumeCurrent(ctx))
+      {
+        // It didn't finish... try again in the future...
+        T(4) << "Pausing: temporal for-loop." << EndT;    
+        return this;
+      }
     }
     else
     {
-      T(4) << "Incrementing: temporal for-loop." << EndT;
-      incr_stmt_->Execute(ctx);
+      if (!active_[ctx.CurrentSpatialPartition()])
+      {
+        // We are at a beginning of a new body invocation.
+        T(4) << "Starting: temporal for-loop." << EndT;
+        init_stmt_->Execute(ctx); 
+      }
+
+      // See if we need more iterations
+      active_[ctx.CurrentSpatialPartition()] = test_expr_->Evaluate(ctx);
+
+      if (active_[ctx.CurrentSpatialPartition()])
+      {
+        // Invoke the body (if any)
+        T(4) << "Executing body: temporal for-loop." << EndT;
+        if (ExecuteCurrentInner(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: temporal for-loop." << EndT;    
+          return this;
+        }
+      }
     }
-
-    // See if we need more iterations
-    active_[ctx.CurrentSpatialPartition()] = test_expr_->Evaluate(ctx);
-
+    
     if (active_[ctx.CurrentSpatialPartition()])
     {
-      // Invoke the body (if any)
-      T(4) << "Executing body: temporal for-loop." << EndT;
-      if (inner_)
-      {
-        partition_continuation_[ctx.CurrentSpatialPartition()] = inner_->Execute(ctx);
-      }
-      // We always need to go again in this state... indicate this by returning this.
-      T(4) << "Pausing: temporal for-loop." << EndT;      
+      T(4) << "Incrementing: temporal for-loop." << EndT;
+      incr_stmt_->Execute(ctx);
+      // Check for more iterations next time around.
+      T(4) << "Pausing: temporal for-loop." << EndT;    
       return this;
     }
     else
@@ -1830,36 +1869,11 @@ class SpatialFor : public Statement
  public:
   int num_partitions_;
   int flat_expansion_factor_ = 1;
-  std::vector<Statement*> paused_partitions_;
 
   Statement* init_stmt_;
   Expression* test_expr_;
   Statement* incr_stmt_;
   
-  
-  bool AnyPartitionIsPaused(int base, int num)
-  {
-    // NOTE: This version gave us trouble, so writing by hand for now...
-    /*
-    // Note: purposely returns false on size zero vectors.
-    auto begin_it = base >= paused_partitions_.size() ? 
-                    paused_partitions_.end() :
-                    paused_partitions_.begin() + base;
-    auto end_it = base + num >= paused_partitions_.size() ? 
-                     paused_partitions_.end() : 
-                     paused_partitions_.begin() + base + num;
-    auto it = std::find_if(begin_it, 
-                           end_it, 
-                           [](Statement* s) { return s != NULL; });
-    return it != paused_partitions_.end();
-    */
-    if (paused_partitions_.size() == 0) return false;
-    for (int x = base; x < base + num; x++)
-    {
-      if (paused_partitions_[x] != NULL) return true;
-    }
-    return false;
-  }
 
   SpatialFor(const int& num_parts, Statement* init_s, Expression* test_e, Statement* incr_s) :
     num_partitions_(num_parts),
@@ -1886,11 +1900,28 @@ class SpatialFor : public Statement
 
     return converted_statement;
   }
+  
+  virtual void Init(ExecutionContext& ctx)
+  {
+    // Purposely don't call superclass method.
+    ctx.BeginSpatialPartitioning(num_partitions_, flat_expansion_factor_);
+    
+    partition_continuations_.resize(ctx.NumSpatialPartitions(), NULL);
+    if (inner_)
+    {
+      inner_->Init(ctx);
+    }
+    ctx.EndSpatialPartitioning();
+    if (next_)
+    {
+      next_->Init(ctx);
+    }
+  };
+    
 
  
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    
     // Make a copy of the existing context so that we can use it for statements in
     // the loop itself. This is because the s_for loop statements themselves are
     // non-parallel.
@@ -1906,7 +1937,6 @@ class SpatialFor : public Statement
     {
       // We are a fresh loop.
       T(4) << "Entering: spatial for-loop: " << num_partitions_ << EndT;
-      paused_partitions_.resize(ctx.NumSpatialPartitions(), NULL);
 
       // Do all the statements in sequence, remembering where to continue them if needed.
       for (init_stmt_->Execute(old_ctx); test_expr_->Evaluate(old_ctx); incr_stmt_->Execute(old_ctx))
@@ -1914,7 +1944,8 @@ class SpatialFor : public Statement
         if (inner_)
         {      
           T(4) << "Entering: spatial partition: " << ctx.CurrentSpatialPartition() << EndT;
-          paused_partitions_[ctx.CurrentSpatialPartition()] = inner_->Execute(ctx);
+          ExecuteCurrentInner(ctx);
+          // Never pause here.
           did_something = true;
         }
         ctx.NextSpatialPartition();
@@ -1928,12 +1959,13 @@ class SpatialFor : public Statement
       for (init_stmt_->Execute(old_ctx); test_expr_->Evaluate(old_ctx); incr_stmt_->Execute(old_ctx))
       {
         // Only actually descend into the paused ones.
-        Statement* cont = paused_partitions_[ctx.CurrentSpatialPartition()];
+        Statement* cont = partition_continuations_[ctx.CurrentSpatialPartition()];
         if (cont != NULL)
         {
           did_something = true;
           T(4) << "Resuming: spatial partition: " << ctx.CurrentSpatialPartition() << EndT;
-          paused_partitions_[ctx.CurrentSpatialPartition()] = cont->Execute(ctx);
+          ResumeCurrent(ctx);
+          // Never pause here.
         }
         ctx.NextSpatialPartition();
       }
@@ -2003,29 +2035,49 @@ class If : public Statement
     return converted_statement;
   }
 
-  
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    T(4) << "Entering: dynamic if." << EndT;
-    int res = test_expr_->Evaluate(ctx);
-    if (res)
+  
+    if (CurrentIsPaused(ctx))
     {
-      T(4) << "    (condition evaluated to true)" << EndT;
-      if (inner_)
+      T(4) << "Bypassing: dynamic if." << EndT;
+      if (ResumeCurrent(ctx))
       {
-        inner_->Execute(ctx);
+        // It didn't finish... try again in the future...
+        T(4) << "Pausing: dynamic if." << EndT;    
+        return this;
       }
     }
-    else 
+    else
     {
-      T(4) << "    (condition evaluated to false)" << EndT;
-      if (else_)
+      T(4) << "Entering: dynamic if." << EndT;
+      int res = test_expr_->Evaluate(ctx);
+
+      if (res)
       {
-        T(4) << "    (switching to else-branch)" << EndT;
-        else_->Execute(ctx);
+        T(4) << "    (condition evaluated to true)" << EndT;
+        if (ExecuteCurrentInner(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: dynamic if." << EndT;    
+          return this;
+        }
+      }
+      else
+      {
+        T(4) << "    (condition evaluated to false)" << EndT;
+        if (ExecuteCurrentElse(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: dynamic if." << EndT;    
+          return this;
+        }
       }
     }
+  
+    // If we got here, nothing paused...
     T(4) << "Done: dynamic if." << EndT;
+
     // Note: we explicitly don't call Statement::Execute(ctx) if we have an else.
     // Instead we jump to whatever is after the else (even if the else itself
     // wasn't executed).
@@ -2069,11 +2121,11 @@ class Else : public Statement
     T(4) << "Entering: else." << EndT;
     if (inner_)
     {
-      inner_->Execute(ctx);
+      return ExecuteCurrentInner(ctx);
     }
     T(4) << "Done: else." << EndT;
     // Note: we explicitly don't call Statement::Execute(ctx) here.
-    // It will be called through ExecuteNext
+    // It will be called through If...
     return NULL; // We are done.
   }
 };
