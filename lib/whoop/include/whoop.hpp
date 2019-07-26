@@ -404,6 +404,7 @@ class Program
   void Run(int num_flat_partitions)
   {
     ast::ExecutionContext ctx(num_flat_partitions);
+    beginning_stmt_->Init(ctx);
     ast::Statement* continuation = beginning_stmt_->Execute(ctx);
     // Keep executing until nothing is paused.
     while (continuation != NULL)
