@@ -184,7 +184,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = index;
-    assert(requestor_idx < 64);
+    ASSERT(requestor_idx < 64) << "Requestor index exceeded multicast mask size: " << requestor_idx << "(connected fronting buffers: " << fronting_buffers_.size() << ")" << EndT;
     info.receiver_mask_[requestor_idx] = true;
     coalescing_buffer_.push_back(std::make_pair(address, info));
     return &coalescing_buffer_.back().second;
@@ -196,7 +196,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = index;
-    assert(requestor_idx < 64);
+    ASSERT(requestor_idx < 64) << "Requestor index exceeded multicast mask size: " << requestor_idx << "(connected fronting buffers: " << fronting_buffers_.size() << ")" << EndT;
     info.receiver_mask_[requestor_idx] = true;
     info.updater_mask_[requestor_idx] = true;
     info.is_dirty_ = true;
@@ -297,7 +297,6 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   // E.g. the L2 weights tile may be the last tile of weights.
   int starting_global_tile_level_;
   int ending_global_tile_level_;
-  std::vector<int> num_datapaths_;
   int local_spatial_idx_;
   
   explicit BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "") :
@@ -305,8 +304,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     TraceableBuffer(nm),
     level_(level),
     starting_global_tile_level_(starting_tile_level),
-    ending_global_tile_level_(starting_tile_level + 1),
-    num_datapaths_(1, 1),
+    ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
     fronting_buffers_{}
   {
@@ -327,7 +325,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalPatternGenerator");
   }
 
-  void LogTopologyModule(std::ostream& ostr)
+  void LogTopologyModule(std::ostream& ostr, int expansion_factor)
   {  
     ostr << "  - type: module" << std::endl;
     ostr << "    class: symphony::modules::BuffetComplex" << std::endl;
@@ -335,12 +333,12 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: false" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"num_receivers = " << GetNumReceivers() << "\""  << std::endl;
-    ostr << "        - \"num_updaters = " << GetNumReceivers() << "\""  << std::endl;
+    ostr << "        - \"num_receivers = " << GetNumReceivers(expansion_factor) << "\""  << std::endl;
+    ostr << "        - \"num_updaters = " << GetNumReceivers(expansion_factor) << "\""  << std::endl;
     ostr << std::endl;
   }
 
-  void LogTopologyConnections(std::ostream& ostr, int id, int local_spatial_idx, int max_tile_level)
+  void LogTopologyConnections(std::ostream& ostr, int id, int expansion_factor)
   {
     for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
     {
@@ -361,16 +359,17 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // The buffer feeds datapaths between it and the next tile level 
     // where this tensor participates.
     // If there is no such tile level then it covers all the remaining levels.
-    int end_level = ending_global_tile_level_ == starting_global_tile_level_ ? max_tile_level : ending_global_tile_level_;
+    int end_level = ending_global_tile_level_ == starting_global_tile_level_ ? compute_logs.size() : ending_global_tile_level_;
+    int local_dp_index = 0;
     for (int tile_level = starting_global_tile_level_; tile_level < end_level; tile_level++)
     {
-      int num_dpaths = num_datapaths_[tile_level - starting_global_tile_level_];
+      int num_dpaths = compute_logs[tile_level].size() / expansion_factor;
       for (int x = 0; x < num_dpaths; x++)
       {
-        int dp_idx = local_spatial_idx * num_dpaths + x;
+        int dp_idx = local_spatial_idx_ * num_dpaths + x;
         ostr << "      - src:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
-        ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + x << std::endl;
+        ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + local_dp_index << std::endl;
         ostr << "        dst:" << std::endl;
         ostr << "        - name: compute_engine_" << tile_level << "_" << dp_idx << std::endl;
         ostr << "          port-name: input_" << id << std::endl; // Note: This index could be smarter.
@@ -379,7 +378,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         ostr << "          port-name: output_" << id << std::endl;
         ostr << "        dst:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
-        ostr << "          port-name: update_data_in_" << fronting_buffers_.size() + x << std::endl;
+        ostr << "          port-name: update_data_in_" << fronting_buffers_.size() + local_dp_index << std::endl;
+        local_dp_index++;
       }
     }
   }
@@ -388,22 +388,27 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   {
     command_log_.Resize(size);
   }
- 
-  void ExpandDatapaths(int global_tile_level, int num)
-  {
-    int tile_level = global_tile_level - starting_global_tile_level_;
-    if (tile_level >= num_datapaths_.size())
-    {
-      // Any unmentioned layers must have 1 datapath.
-      num_datapaths_.resize(tile_level+1, 1);
-    }
-    num_datapaths_[tile_level] *= num;
-  }
 
-  int GetNumReceivers()
+  int GetNumReceivers(int expansion_factor)
   {
-    int flat_datapaths = std::accumulate(num_datapaths_.begin(), num_datapaths_.end(), 0);
-    return fronting_buffers_.size() + flat_datapaths;
+    int flat_datapaths = 0;
+    auto end_it = ending_global_tile_level_ == starting_global_tile_level_ ? compute_logs.end() : compute_logs.begin() + ending_global_tile_level_;
+    for (auto it = compute_logs.begin() + starting_global_tile_level_; it != end_it; it++)
+    {
+      flat_datapaths += (*it).size();
+    }
+    return fronting_buffers_.size() + (flat_datapaths/expansion_factor);
+  }
+  
+  int GetComputeIndex(int tile_level, int local_spatial_idx)
+  {
+    int flat_datapaths = 0;
+    assert(tile_level < compute_logs.size());
+    for (auto it = compute_logs.begin() + starting_global_tile_level_; it != compute_logs.begin() + tile_level; it++)
+    {
+      flat_datapaths += (*it).size();
+    }
+    return fronting_buffers_.size() + flat_datapaths + local_spatial_idx;
   }
  
   virtual void Access(int address, int requestor_idx) = 0;
@@ -414,7 +419,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   virtual void SetBufferWidth(int width) = 0;
 };
 
-class OffChipBufferModel : public BufferModel
+class BackingBufferModel : public BufferModel
 {
  private:
   int GetIdx(int address)
@@ -428,13 +433,13 @@ class OffChipBufferModel : public BufferModel
 
     if(rowbuffer_active_idx_ == addr_idx)
     {
-      IncrStat("Offchip row buffer hit");
+      IncrStat("Backing row buffer hit");
       T(4) << "Row buffer hit for read to address " << address << EndT;
     }
     else
     {
       rowbuffer_active_idx_ = addr_idx;
-      IncrStat("Offchip row buffer miss");
+      IncrStat("Backing row buffer miss");
       T(4) << "Row buffer miss for read to address " << address << EndT;
     }
   }
@@ -443,10 +448,10 @@ class OffChipBufferModel : public BufferModel
   int rowbuffer_active_idx_ = -1;
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
-  OffChipBufferModel(const std::string& nm, int size) : 
+  BackingBufferModel(const std::string& nm, int size) : 
     BufferModel(0, 0, 0, nm)
   {
-    AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (offchip memory)" + nm);
+    AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (backing memory)" + nm);
     command_log_.Init(size, 0, false);
   }
 
@@ -454,13 +459,13 @@ class OffChipBufferModel : public BufferModel
   {   
     if (CheckCoalescing(address, requestor_idx, false))
     {  
-      IncrStat("Offchip multicasts");
+      IncrStat("Backing multicasts");
       T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
     }
     else
     {
       CheckRowBufferHit(address);
-      IncrStat("Offchip reads");
+      IncrStat("Backing reads");
       T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
       LogAccess(address, requestor_idx, address);
       TryToDrainOldestAccesses();
@@ -471,14 +476,14 @@ class OffChipBufferModel : public BufferModel
   {
     if (CheckCoalescing(address, requestor_idx, true))
     {  
-      IncrStat("Offchip multi-reduces");
+      IncrStat("Backing multi-reduces");
       T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
     }
     else
     {
       CheckRowBufferHit(address);
 
-      IncrStat("Offchip updates");
+      IncrStat("Backing updates");
       T(4) << "Update, address: " << address  << " by requestor: " << requestor_idx << EndT;
       LogUpdate(address, requestor_idx, address);
       TryToDrainOldestAccesses();
@@ -921,31 +926,33 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const int& new_val, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );
-    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[access_tile_level]->size());
 
     IncrStat("Tensor updates");
     UINT64 idx = FlattenIndices(idxs);
     vals_[idx] = new_val;
-    auto buffer_to_access = (*(*buffer_levels_[port_idx])[tile_level])[buffer_spatial_part_idx];
-    // Datapath access ids are offset by the fronting buffers.
-    buffer_to_access->Update(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
+    auto buffer_to_access = (*(*buffer_levels_[port_idx])[access_tile_level])[buffer_spatial_part_idx];
+    // Datapath access ids are offset by the fronting buffers and any previous datapaths.
+    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx);
+    buffer_to_access->Update(idx, my_final_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
+  int Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );      
-    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );      
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[access_tile_level]->size());
 
     IncrStat("Tensor reads");
     UINT64 idx = FlattenIndices(idxs);
-    auto buffer_to_access = (*(*buffer_levels_[port_idx])[tile_level])[buffer_spatial_part_idx];
-    // Datapath access ids are offset by the fronting buffers.
-    buffer_to_access->Access(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
+    auto buffer_to_access = (*(*buffer_levels_[port_idx])[access_tile_level])[buffer_spatial_part_idx];
+    // Datapath access ids are offset by the fronting buffers and any previous datapaths.
+    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx);
+    buffer_to_access->Access(idx, my_final_idx);
     return vals_[idx];
   }
 
@@ -1002,14 +1009,14 @@ class PrimTensor : public StatsCollection
     dim_sizes_.assign(dim_sizes.rbegin(), dim_sizes.rend());
     UINT64 s = FlattenSizes(dim_sizes_);
     vals_.resize(s);
-    // Tell the offchip buffer the new size.
+    // Tell the backing buffer the new size.
     (*buffer_levels_[0])[0]->at(0)->Resize(s);
   }
   
   // Used when loading tensors from files to cleanup buffer model.
   void FixupSize()
   {
-    // Tell the offchip buffer the new size.
+    // Tell the backing buffer the new size.
     UINT64 s = FlattenSizes(dim_sizes_);
     (*buffer_levels_[0])[0]->at(0)->Resize(s);
   }
@@ -1052,25 +1059,13 @@ class PrimTensor : public StatsCollection
     }
   }
 
-  void ExpandDatapaths(int global_tile_level, int num)
-  {
-    for (auto port_it : buffer_levels_)
-    {
-      auto last_level = (*port_it).back();
-      for (auto buf_it : *last_level)
-      {
-        (*buf_it).ExpandDatapaths(global_tile_level, num);
-      }
-    }
-  }
-
   void DrainAll()
   {
-    // Purposely iterate ports backwards since offchip is always port 0.
+    // Purposely iterate ports backwards since backing is always port 0.
     for (auto port_rit = buffer_levels_.rbegin(); port_rit != buffer_levels_.rend(); port_rit++)
     {
       // Purposely iterate from closer levels on down, for maximum locality.
-      // Skip level 0 since it is the same offchip for each port and handled specially
+      // Skip level 0 since it is the same backing for each port and handled specially
       for (auto level_rit = (*port_rit)->rbegin(); level_rit != std::prev((*port_rit)->rend()); level_rit++)
       {
         for (auto buf : *(*level_rit))
@@ -1079,7 +1074,7 @@ class PrimTensor : public StatsCollection
         }
       }
     }
-    // Every tensor has an offchip.
+    // Every tensor has a backing level.
     (*buffer_levels_[0])[0]->at(0)->DrainAll();
   }
   
@@ -1103,7 +1098,7 @@ class PrimTensor : public StatsCollection
   {
     for (auto& port : buffer_levels_)
     {
-      // Skip the offchip level as it is repeated across ports.
+      // Skip the backing level as it is repeated across ports.
       for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         for (auto& buff : *(*level_it))
@@ -1113,7 +1108,7 @@ class PrimTensor : public StatsCollection
         }
       }
     }
-    // Every tensor has an offchip.
+    // Every tensor has a backing level.
     (*buffer_levels_[0])[0]->at(0)->LogActivity(ostr);
   }
 
@@ -1121,36 +1116,36 @@ class PrimTensor : public StatsCollection
   {
     for (auto& port : buffer_levels_)
     {
-      // Skip the offchip level as it is repeated across ports.
+      // Skip the backing level as it is repeated across ports.
       for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         for (auto& buff : *(*level_it))
         {
-          buff->LogTopologyModule(ostr);
+          buff->LogTopologyModule(ostr, (*level_it)->size());
         }
       }
     }
-    // Every tensor has an offchip.
-    (*buffer_levels_[0])[0]->at(0)->LogTopologyModule(ostr);
+    // Every tensor has a backing level.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyModule(ostr, 1);
   }
 
-  void LogTopologyConnections(std::ostream& ostr, int max_tile_level)
+  void LogTopologyConnections(std::ostream& ostr)
   {
     for (auto& port : buffer_levels_)
     {
-      // Skip the offchip level as it is repeated across ports.
+      // Skip the backing level as it is repeated across ports.
       for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         int local_spatial_idx = 0;
         for (auto& buff : *(*level_it))
         {
-          buff->LogTopologyConnections(ostr, id_, local_spatial_idx, max_tile_level);
+          buff->LogTopologyConnections(ostr, id_,  (*level_it)->size());
           local_spatial_idx++;
         }
       }
     }
-    // Every tensor has an offchip.
-    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 0, max_tile_level);
+    // Every tensor has a backing level.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 1);
   }
 };
 
@@ -1324,7 +1319,7 @@ class TensorAccess : public Expression
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
     compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogInputTensor(target_.id_);
-    return target_.Access(v, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
+    return target_.Access(v, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
   }
 };
 
@@ -1585,7 +1580,7 @@ class TensorAssignment : public Statement
     int res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
-    target_.Update(vidxs, res, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
+    target_.Update(vidxs, res, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
     // TODO: Capture multicasting to datapaths.
     compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
     T(4) << "Done: tensor assignment." << EndT;

@@ -211,13 +211,15 @@ extern std::vector<std::vector<int>> current_tile_level;
 extern int max_tile_level;
 // Not all tensors add all tile levels. This increments/decrements globally.
 extern std::deque<int> global_tile_level_deliminators;
+extern std::vector<int> compute_tile_levels;
 extern int current_global_tile_level;
+extern bool need_global_tile_level;
 // Track how many spatial tiles there are at each tile level.
 extern std::vector<int> tile_level_spatial_expansions;
 
 
 int NumSpatialPartitionsFlattened();
-int ActualSpatialPartitionHeight();
+int ActualSpatialPartitionHeight(int count_ones = false);
 
 class Tensor;
 class Vec;
@@ -663,17 +665,17 @@ class Tensor : public ast::PrimTensor
  private:
   void Init()
   {
-    std::shared_ptr<buff::BufferModel> offchip(new buff::OffChipBufferModel("offchip_" + name_, vals_.size()));
+    std::shared_ptr<buff::BufferModel> backing(new buff::BackingBufferModel("backing_" + name_, vals_.size()));
     std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>> 
-        offchip_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, offchip));
+        backing_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, backing));
     // Set up tile-level tracking state.
     id_ = all_tensors.size();
     tile_level_deliminators.push_back(std::vector<std::deque<int>>());
     current_tile_level.push_back(std::vector<int>({0}));
     all_tensors.push_back(this);
-    // Add port 0, and add the offchip buffer to it.
+    // Add port 0, and add the backing buffer to it.
     AddPort();
-    buffer_levels_[0]->push_back(offchip_vec);
+    buffer_levels_[0]->push_back(backing_vec);
   }
 
  public:
@@ -736,7 +738,7 @@ class Tensor : public ast::PrimTensor
     return this->operator[](TreeBuilder(body_e));
   }
 
-  void SetOffchipRowBufferWidth(int size)
+  void SetBackingRowBufferWidth(int size)
   {
     (*buffer_levels_[0])[0]->at(0)->SetBufferWidth(size);
   }
@@ -764,23 +766,35 @@ class Tensor : public ast::PrimTensor
 
     auto backing_it = buffer_levels_[port]->back()->begin();
 
-    // Record where this tile level should be removed from the stack of tiles.
     current_tile_level[id_][port]++;
+
+    // The first AddTileLevel after one (or more) s_for increments the compute level.
+    if (need_global_tile_level || current_tile_level[id_][port] > max_tile_level)
+    {
+      current_global_tile_level++;
+      if (current_global_tile_level+1 > compute_tile_levels.size())
+      {
+        compute_tile_levels.push_back(NumSpatialPartitionsFlattened());
+      }
+      global_tile_level_deliminators.push_back(spatial_partition_levels.size());
+      need_global_tile_level = false;
+    }
+    
+    // Record where this tile level should be removed from the stack of tiles.
     if (current_tile_level[id_][port] > max_tile_level)
     {
       max_tile_level = current_tile_level[id_][port];
       tile_level_spatial_expansions.push_back(1);
-      current_global_tile_level++;
-      global_tile_level_deliminators.push_back(spatial_partition_levels.size());
     }
-    tile_level_deliminators[id_][port].push_back(spatial_partition_levels.size());
 
-    // Finalize the number of tile levels the old buffer level spans
+    // Tell the backing stores they are done serving compute.
     for (auto& backing_store : (*buffer_levels_[port]->back()))
     {
       backing_store->ending_global_tile_level_ = current_global_tile_level;
     }
     
+    tile_level_deliminators[id_][port].push_back(spatial_partition_levels.size());
+
     for (int x = 0; x < num_flat; x++)
     {
       std::string nm = name_;

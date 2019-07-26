@@ -138,7 +138,7 @@ class Log
 class PatternGeneratorLog : public Log
 {
  public:
-  void Send(int idx)
+  void Send(long int idx)
   {
     if (!options::kShouldLogActivity) return;
     boost::property_tree::ptree send_action;

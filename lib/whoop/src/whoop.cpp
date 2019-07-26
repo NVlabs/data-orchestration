@@ -43,7 +43,9 @@ std::vector<std::vector<std::deque<int>>> tile_level_deliminators{};
 std::vector<std::vector<int>> current_tile_level{};
 int max_tile_level = 0;
 std::deque<int> global_tile_level_deliminators{};
+std::vector<int> compute_tile_levels{1};
 int current_global_tile_level = 0;
+bool need_global_tile_level = false;
 std::vector<int> tile_level_spatial_expansions{1};
 int max_flat_expansion = 1;
 std::list<InFromFile*> need_input{};
@@ -119,7 +121,7 @@ void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
   ast::SpatialFor* stmt = new ast::SpatialFor(end_const, init_s, test_e, incr_s);
   the_program.AddIncomplete(stmt);
   // Mark the spatial expansions as proper.
-  int height = ActualSpatialPartitionHeight();
+  int height = ActualSpatialPartitionHeight(true);
   if (height >= spatial_partition_levels_sanity_check.size())
   {
     // This is a new "highest" spatial for level, so
@@ -134,10 +136,7 @@ void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
     spatial_partition_levels.push_back(std::make_pair(stmt, end_const));
     spatial_partition_levels_sanity_check.push_back(end_const);
     tile_level_spatial_expansions[max_tile_level] *= end_const;
-    for (auto& t : all_tensors)
-    {
-      t->ExpandDatapaths(max_tile_level, end_const);
-    }
+    need_global_tile_level = true;
   }
   else
   {
@@ -401,7 +400,7 @@ void LogTensorTopology(std::string fname)
 
   for (auto it = all_tensors.begin(); it != all_tensors.end(); it++)
   {
-    (*it)->LogTopologyConnections(ofile, max_tile_level + 1);
+    (*it)->LogTopologyConnections(ofile);
   }
   ofile << std::endl;
 }
@@ -433,14 +432,17 @@ int NumSpatialPartitionsFlattened()
   return res;
 }
 
-int ActualSpatialPartitionHeight()
+int ActualSpatialPartitionHeight(int count_ones)
 {
   int res = 0;
   for (auto sp : spatial_partition_levels)
   {
     if (sp.first != NULL)
     {
-      res++;
+      if (sp.second != 1 || count_ones)
+      {
+        res++;
+      }
     }
   }
   return res;
@@ -505,14 +507,7 @@ void Run()
 
   user_tracer_.ASSERT(spatial_partition_levels.size() == 0) << "You have a missing end() call in the loop nest -- Please check!" << EndT;
   
-  // Flatten the spatial expansions across tile levels in order to
-  // make the indexing math easy.
-  auto flattened_tile_level_spatial_expansions = tile_level_spatial_expansions;
-  for (int x = 1; x < flattened_tile_level_spatial_expansions.size(); x++)
-  {
-    flattened_tile_level_spatial_expansions[x] *= flattened_tile_level_spatial_expansions[x-1];
-  }
-  InitializeComputeLogs(flattened_tile_level_spatial_expansions);
+  InitializeComputeLogs(compute_tile_levels);
   
   int max_flat_expansion = 1;
   for (auto level : spatial_partition_levels_sanity_check)
