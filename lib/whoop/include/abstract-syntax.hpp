@@ -314,15 +314,15 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   {
     command_log_.Dump(ostr, Traceable::GetName() + "_commands", "symphony::modules::LocalBuffet");
     ostr << "," << std::endl;
-    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LocalPatternGenerator");
+    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LocalPatternGenerator");
+    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LocalPatternGenerator");
+    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LocalPatternGenerator");
+    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalPatternGenerator");
+    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalGatedPatternGenerator");
   }
 
   void LogTopologyModule(std::ostream& ostr, int expansion_factor)

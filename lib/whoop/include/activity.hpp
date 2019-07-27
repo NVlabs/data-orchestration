@@ -329,9 +329,9 @@ class ComputeEngineLog : public Log
   
   void Dump(std::ostream& ostr, const std::string& nm, const std::string& mytype)
   {
-    sgen_log_.Dump(ostr, nm + "_input_sources", "symphony::modules::LocalPatternGenerator");
+    sgen_log_.Dump(ostr, nm + "_input_sources", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    dgen_log_.Dump(ostr, nm + "_output_destinations", "symphony::modules::LocalPatternGenerator");
+    dgen_log_.Dump(ostr, nm + "_output_destinations", "symphony::modules::LocalGatedPatternGenerator");
   }
 };
 
