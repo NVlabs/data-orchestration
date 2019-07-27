@@ -137,6 +137,7 @@ void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
     spatial_partition_levels_sanity_check.push_back(end_const);
     tile_level_spatial_expansions[max_tile_level] *= end_const;
     need_global_tile_level = true;
+    compute_tile_levels.back() *= end_const;
   }
   else
   {

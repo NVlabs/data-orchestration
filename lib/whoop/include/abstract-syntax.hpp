@@ -184,7 +184,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = index;
-    ASSERT(requestor_idx < 64) << "Requestor index exceeded multicast mask size: " << requestor_idx << "(connected fronting buffers: " << fronting_buffers_.size() << ")" << EndT;
+    ASSERT(requestor_idx < 64) << "Requestor index exceeded multicast mask size: " << requestor_idx << " (connected fronting buffers: " << fronting_buffers_.size() << ")" << EndT;
     info.receiver_mask_[requestor_idx] = true;
     coalescing_buffer_.push_back(std::make_pair(address, info));
     return &coalescing_buffer_.back().second;
@@ -338,7 +338,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << std::endl;
   }
 
-  void LogTopologyConnections(std::ostream& ostr, int id, int expansion_factor)
+  void LogTopologyConnections(std::ostream& ostr, int id, int spatial_idx, int expansion_factor)
   {
     for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
     {
@@ -366,7 +366,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       int num_dpaths = compute_logs[tile_level].size() / expansion_factor;
       for (int x = 0; x < num_dpaths; x++)
       {
-        int dp_idx = local_spatial_idx_ * num_dpaths + x;
+        int dp_idx = spatial_idx * num_dpaths + x;
         ostr << "      - src:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
         ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + local_dp_index << std::endl;
@@ -400,13 +400,13 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     return fronting_buffers_.size() + (flat_datapaths/expansion_factor);
   }
   
-  int GetComputeIndex(int tile_level, int local_spatial_idx)
+  int GetComputeIndex(int tile_level, int local_spatial_idx, int expansion_factor)
   {
     int flat_datapaths = 0;
     assert(tile_level < compute_logs.size());
     for (auto it = compute_logs.begin() + starting_global_tile_level_; it != compute_logs.begin() + tile_level; it++)
     {
-      flat_datapaths += (*it).size();
+      flat_datapaths += (*it).size() / expansion_factor;
     }
     return fronting_buffers_.size() + flat_datapaths + local_spatial_idx;
   }
@@ -931,27 +931,29 @@ class PrimTensor : public StatsCollection
     is_updated_dynamically_ = true;
     // TODO: better error messages.
     int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );
-    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[access_tile_level]->size());
+    int num_buffers = (*buffer_levels_[port_idx])[access_tile_level]->size();
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / num_buffers);
 
     IncrStat("Tensor updates");
     UINT64 idx = FlattenIndices(idxs);
     vals_[idx] = new_val;
     auto buffer_to_access = (*(*buffer_levels_[port_idx])[access_tile_level])[buffer_spatial_part_idx];
     // Datapath access ids are offset by the fronting buffers and any previous datapaths.
-    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx);
+    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx, num_buffers);
     buffer_to_access->Update(idx, my_final_idx);
   }
   
   int Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
     int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );      
-    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[access_tile_level]->size());
+    int num_buffers = (*buffer_levels_[port_idx])[access_tile_level]->size();
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / num_buffers);
 
     IncrStat("Tensor reads");
     UINT64 idx = FlattenIndices(idxs);
     auto buffer_to_access = (*(*buffer_levels_[port_idx])[access_tile_level])[buffer_spatial_part_idx];
     // Datapath access ids are offset by the fronting buffers and any previous datapaths.
-    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx);
+    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx, num_buffers);
     buffer_to_access->Access(idx, my_final_idx);
     return vals_[idx];
   }
@@ -1139,13 +1141,13 @@ class PrimTensor : public StatsCollection
         int local_spatial_idx = 0;
         for (auto& buff : *(*level_it))
         {
-          buff->LogTopologyConnections(ostr, id_,  (*level_it)->size());
+          buff->LogTopologyConnections(ostr, id_, local_spatial_idx, (*level_it)->size());
           local_spatial_idx++;
         }
       }
     }
     // Every tensor has a backing level.
-    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 1);
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 0, 1);
   }
 };
 

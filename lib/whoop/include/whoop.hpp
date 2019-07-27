@@ -775,7 +775,7 @@ class Tensor : public ast::PrimTensor
       current_global_tile_level++;
       if (current_global_tile_level+1 > compute_tile_levels.size())
       {
-        compute_tile_levels.push_back(NumSpatialPartitionsFlattened());
+        compute_tile_levels.push_back(compute_tile_levels.back());
       }
       global_tile_level_deliminators.push_back(spatial_partition_levels.size());
       need_global_tile_level = false;
