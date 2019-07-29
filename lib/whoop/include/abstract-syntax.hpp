@@ -55,6 +55,8 @@
 #include "pure-abstract-syntax.hpp"
 
 typedef unsigned long UINT64;
+// typedef int DataType_t;
+typedef double DataType_t;
 
 namespace whoop
 {
@@ -744,7 +746,7 @@ class PrimVar : public StatsCollection
 {
  public:
   
-  std::vector<int> vals_;
+  std::vector<DataType_t> vals_;
   
   PrimVar() = default;
 
@@ -765,7 +767,7 @@ class PrimVar : public StatsCollection
     vals_.resize(flattened_num_partitions, 0xAAAAAAAA);
   }
   
-  void Update(const int& flat_base, const int& flat_bound, const int& new_val)
+  void Update(const int& flat_base, const int& flat_bound, const DataType_t& new_val)
   {
     IncrStat("Var updates");
     for (int x = flat_base; x < flat_bound; x++)
@@ -774,10 +776,10 @@ class PrimVar : public StatsCollection
     }
   }
   
-  int Access(const int& flat_base, const int& flat_bound)
+  DataType_t Access(const int& flat_base, const int& flat_bound)
   {
     IncrStat("Var reads");
-    int result = vals_[flat_base];
+    DataType_t result = vals_[flat_base];
     for (int x = flat_base; x < flat_bound; x++)
     {
       assert(result == vals_[x]);
@@ -860,7 +862,7 @@ class PrimTensor : public StatsCollection
  public:
   
   std::vector<int> dim_sizes_; // 0 == innermost, N-1 == outermost
-  std::vector<int> vals_;
+  std::vector<DataType_t> vals_;
   // A global id for this tensor in the list of all tensors.
   int id_;
   // The following information is important both for optimizations
@@ -896,7 +898,7 @@ class PrimTensor : public StatsCollection
   {
   }
 
-  void FillVal( int fill_val_ )
+  void FillVal( DataType_t fill_val_ )
   {
     std::fill(vals_.begin(), vals_.end(), fill_val_);
   }
@@ -921,7 +923,7 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const DataType_t& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
@@ -936,7 +938,7 @@ class PrimTensor : public StatsCollection
     buffer_to_access->Update(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
+  DataType_t Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
     int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );      
     int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
@@ -949,29 +951,29 @@ class PrimTensor : public StatsCollection
     return vals_[idx];
   }
 
-  int& At(const std::vector<int>& idxs)
+  DataType_t& At(const std::vector<int>& idxs)
   {
     UINT64 idx = FlattenIndices(idxs);
     return vals_[idx];
   }
 
-  const int& At(const std::vector<int>& idxs) const
+  const DataType_t& At(const std::vector<int>& idxs) const
   {
     UINT64 idx = FlattenIndices(idxs);
     return vals_[idx];
   }
   
-  int& PrimAt(const int& idx)
+  DataType_t& PrimAt(const int& idx)
   {
     return vals_[idx];
   }
 
-  const int& PrimAt(const int& idx) const
+  const DataType_t& PrimAt(const int& idx) const
   {
     return vals_[idx];
   }
 
-  void PrimPushBack(const int& val)
+  void PrimPushBack(const DataType_t& val)
   {
     vals_.push_back(val);
   }
@@ -2011,6 +2013,9 @@ class If : public Statement
   
   virtual Statement* Execute(ExecutionContext& ctx)
   {
+
+//     Statement* stmt_result;
+
     T(4) << "Entering: dynamic if." << EndT;
     int res = test_expr_->Evaluate(ctx);
     if (res)
@@ -2019,6 +2024,11 @@ class If : public Statement
       if (inner_)
       {
         inner_->Execute(ctx);
+//         stmt_result = inner_->Execute(ctx);
+//         if( stmt_result != NULL )
+//         {
+//             return stmt_result;
+//         }
       }
     }
     else 

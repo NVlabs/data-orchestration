@@ -100,6 +100,7 @@ WHOOP_DEFINE_DERIVED_OPS(Var)
 WHOOP_DEFINE_DERIVED_OPS(TensorDisambiguator)
     
 
+
 void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
 {
   // The initialization statement is always a var assignment to 0.
@@ -244,7 +245,6 @@ void w_while(const int& test_const)
   ast::Constant* const_expr = new ast::Constant(test_const);
   w_if(TreeBuilder(const_expr));
 }
-
 
 void w_if(TreeBuilder test_expr)
 {

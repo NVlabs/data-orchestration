@@ -197,6 +197,10 @@ int main(int argc, char** argv)
     /******************************************************/
     /******************************************************/
 
+//     graphAlg.PageRankNibble_Untiled(0);
+    graphAlg.Whoop_PageRankNibble_Untiled(0);
+
+    exit(0);
     if( ARG_RUN_MODE == MODE_UNTILED ) 
     {
 

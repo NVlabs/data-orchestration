@@ -446,9 +446,21 @@ class GraphAlgorithm
     VecIn*       ValueArray;
 
     CSF*         adjMat_csf;
+
+    // SPMV Specific
     Tensor*      srcData;
     Tensor*      dstData;
 
+    // Page Rank Nibble Specific
+    Tensor*      pageRank;
+    Tensor*      frontier;
+    Tensor*      residual;
+    Tensor*      residual_prime;
+    double       alpha;
+    double       epsilon;
+    
+    
+    // Graph Specific
     Tensor*      outDegree;
     Tensor*      inDegree;
     bool         degreeCalc;
@@ -474,8 +486,15 @@ class GraphAlgorithm
         adjMat_csf       = NULL;
         DeltaArray       = NULL;
 
+        // spmv init
         srcData->Resize( {V} );
         dstData->Resize( {V} );
+
+        // page rank init
+        pageRank->Resize( {V} );
+        frontier->Resize( {V} );
+        residual->Resize( {V} );
+        residual_prime->Resize( {V} );
 
         degreeCalc = false;
         outDegree->Resize( {V} );
@@ -540,9 +559,19 @@ class GraphAlgorithm
         CoordinateArray = coordArray;
         ValueArray      = valArray;
 
+        // init SPMV
         srcData   = new Tensor("srcData");
         dstData   = new Tensor("dstData");
 
+        // init Page Rank Nibble
+        pageRank       = new Tensor("pagerank");
+        frontier       = new Tensor("frontier");
+        residual       = new Tensor("residual");
+        residual_prime = new Tensor("residual_prime");
+        alpha          = 0.15;
+        epsilon        = 1e-6;
+        
+        // graph specific
         inDegree  = new Tensor("inDegree");
         outDegree = new Tensor("outDegree");
         
@@ -958,8 +987,8 @@ class GraphAlgorithm
         // Validate
         for(int v=0; v<V; v++)
         {
-            int neighbors        = outDegree->At({v});
-            int whoop_neighbors  = dstData->At({v});
+            DataType_t neighbors        = outDegree->At({v});
+            DataType_t whoop_neighbors  = dstData->At({v});
 
             if( neighbors != whoop_neighbors )
             {
@@ -967,9 +996,217 @@ class GraphAlgorithm
                 cout<<"Validation Failed"<<endl;
                 exit(0);
             }
+            else 
+            {
+                cout<<"v: "<<v<<" Neighbors: "<<neighbors<<" Whoop: "<<whoop_neighbors<<" srcData: "<<srcData->At({v})<<endl;
+            }
+            
 
             // Reset it
             dstData->At({v}) = 0;
+        }
+    }
+
+    void Whoop_PageRankNibble_Untiled( int seed )
+    {
+        CalculateDegrees();
+
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update");
+
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p");
+
+        
+        Vec iters("iters");
+        iters.Resize({1});
+        iters.At(0) = 0;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        t_for(v, 0, V);
+        {
+            (*residual)[v] = 0;
+            (*pageRank)[v] = 0;
+            (*frontier)[v] = 0;
+        }
+        end();
+        
+        // Start Page Rank Computation
+        (*frontier)[seed] = 1;
+        (*residual)[seed] = 1;
+        (*residual_prime)[seed] = 1;
+        
+        frontier_empty       = 0;
+        
+        w_while( frontier_empty == 0 );
+        {
+            iters[0] += 1;
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+        }
+        end();
+
+            
+//             // Update The Page Rank
+//             t_for(v, 0, V);
+//             {
+//                 w_if( (*frontier)[v] == 1 );
+//                 {
+//                     (*pageRank)[v] += weight1 * (*residual)[v];
+//                     (*residual_prime)[v] = 0;
+//                 }
+//                 end();
+//             }
+//             end();
+// 
+//             // Propogate The Residuals To Neighbors
+//             t_for(s, 0, V);
+//             {
+//                 w_if( (*frontier)[s] == 1 );
+//                 {
+//                     update =  weight2 * (*residual)[s] / (*outDegree)[s];
+// 
+//                     pos_start = (*SegmentArray)[s];
+//                     pos_end   = (*SegmentArray)[s+1];
+// 
+//                     t_for(p,pos_start,pos_end);
+//                     {
+//                         d = (*CoordinateArray)[p];
+//                         (*residual_prime)[d] += update;
+//                     }
+//                     end();
+//                 }
+//                 end();
+//             }
+//             end();
+// 
+//             // Generate The New Frontier
+//             frontier_empty = 1;
+
+//             t_for(v, 0, V);
+//             {
+//                 // copy the update residuals
+//                 (*residual)[v] = (*residual_prime)[v];
+//             
+//                 // Generate the new frontier
+//                 w_if( (*outDegree)[v] && ((*residual)[v] >= ((*outDegree)[v] * epsilon)) );
+//                 {
+//                     (*frontier)[v] = 1;
+//                     frontier_empty = 0;
+//                 }
+//                 w_else();
+//                 {
+//                     (*frontier)[v] = 0;
+//                 }
+//                 end();
+//             }
+//             end();
+// 
+// 
+// 
+//             // Generate The New Frontier
+//             frontier_empty = 1;
+// 
+//         }
+//         end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+
+        std::cout<<"Number of Iterations: "<<iters.At(0)<<std::endl;
+
+        whoop::Done();
+    }
+
+    void PageRankNibble_Untiled( int seed )
+    {
+        CalculateDegrees();
+
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({seed}) = 1;
+        residual->At({seed}) = 1;
+        residual_prime->At({seed}) = 1;
+        
+        frontier_empty       = 0;
+        frontier_size++;
+        
+        while( frontier_empty == 0 )
+        {
+            std::cout<<"Frontier Size: "<<frontier_size<<std::endl;
+            
+            // Update The Page Rank
+            for(int v=0; v<V; v++)
+            {
+                if( frontier->At({v}) == 1 )
+                {
+                    pageRank->At({v}) += weight1 * residual->At({v});
+                    residual_prime->At({v}) = 0;
+                }
+            }
+
+            // Propogate The Residuals To Neighbors
+            for(int s=0; s<V; s++)
+            {
+                if( frontier->At({s}) == 1 )
+                {
+                    update =  weight2 * residual->At({s}) / outDegree->At({s});
+
+                    pos_start = SegmentArray->At({s});
+                    pos_end   = SegmentArray->At({s+1});
+
+                    for(p=pos_start; p<pos_end; p++)
+                    {
+                        d = CoordinateArray->At({p});
+                        residual_prime->At({d}) += update;
+                    }
+                }
+            }
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+                    frontier->At({v}) = 1;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+                else
+                {
+                    frontier->At({v}) = 0;
+                }
+            }
         }
     }
 
@@ -1008,8 +1245,7 @@ class GraphAlgorithm
                         for(int p=pos_start; p<pos_end; p++)
                         {
                             d = CoordinateArray->At(p);
-                        
-                            dstData->At({s}) += srcData->At({d});
+                            dstData->At({s}) += srcData->At({d})*3.5;
                         }
                     }
                     
@@ -1113,8 +1349,8 @@ class GraphAlgorithm
                 {
                     s = s2*S1*S0 + s1*S0 + s0;
 
-                    w_if( s < V );
-                    {
+//                     w_if( s < V );
+//                     {
                         t_for(p,(*SegmentArray)[s],(*SegmentArray)[s+1]);
                         {
                             d = (*CoordinateArray)[p];
@@ -1122,8 +1358,8 @@ class GraphAlgorithm
                             (*dstData)[s] += (*ValueArray)[p]*(*srcData)[d];
                         }
                         end();
-                    }
-                    end();
+//                     }
+//                     end();
                 }
                 end();
             }

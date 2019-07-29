@@ -300,6 +300,8 @@ void end();
 
 void DumpStats();
 
+void w_heartbeat( std::string str, Var& val );
+
 ast::Expression* ToAccess(const int& c);
 ast::Statement* ToAssignment(const int& c, ast::Expression* body_e);
 ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
@@ -1041,12 +1043,12 @@ class Vec : public Tensor
     Tensor::Resize({new_size});
   }
   
-  int& At(const int& idx)
+  DataType_t& At(const int& idx)
   {
     return PrimAt(idx);
   }
 
-  const int& At(const int& idx) const
+  const DataType_t& At(const int& idx) const
   {
     return PrimAt(idx);
   }
