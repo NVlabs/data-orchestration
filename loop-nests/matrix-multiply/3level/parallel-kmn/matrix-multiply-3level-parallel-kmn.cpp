@@ -143,16 +143,13 @@ int main(int argc, char** argv)
             t_for(k0, 0, K0);
             {
               // A-stationary, col-major L0.
-              input_a.AddTileLevel(1);
               input_b.AddTileLevel(N0);
-              outputs.AddTileLevel(1);
 
               k = k1 * K0 + k0;
 
               s_for(m0, 0, M0);
               {
                 input_a.AddTileLevel(1);
-                input_b.AddTileLevel(1);
                 outputs.AddTileLevel(N0);
                 m = m2 * M1 * M0 + m1 * M0 + m0;
                 t_for(n0, 0, N0);

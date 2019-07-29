@@ -31,6 +31,7 @@ set -e
 scons -u -Q debug=1
 
 executable=./conv1d-parallel-tiled-outputS-weight-output.bin
+#executable="gdb --args ./conv1d-parallel-tiled-outputS-weight-output.bin"
 
 if [ $# -eq 2 ]; then
     infile=$1

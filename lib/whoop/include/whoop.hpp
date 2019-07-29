@@ -198,7 +198,7 @@ class TreeBuilder;
 // Global variable to hold the current partitioning.
 // We use a stack so we can add to it as we traverse loops.
 // (Implemented as a deque so we can get an iterator to it.)
-extern std::deque<int> spatial_partition_levels;
+extern std::deque<std::pair<ast::SpatialFor*, int>> spatial_partition_levels;
 
 // tile level tracking
 // Global variable to hold the current tile level for each tensor,
@@ -211,12 +211,15 @@ extern std::vector<std::vector<int>> current_tile_level;
 extern int max_tile_level;
 // Not all tensors add all tile levels. This increments/decrements globally.
 extern std::deque<int> global_tile_level_deliminators;
+extern std::vector<int> compute_tile_levels;
 extern int current_global_tile_level;
+extern bool need_global_tile_level;
 // Track how many spatial tiles there are at each tile level.
 extern std::vector<int> tile_level_spatial_expansions;
 
 
 int NumSpatialPartitionsFlattened();
+int ActualSpatialPartitionHeight(int count_ones = false);
 
 class Tensor;
 class Vec;
@@ -259,6 +262,62 @@ class TensorDisambiguator;
 class TensorPort;
 
 
+void s_for(ast::PrimVar& v, const int& init_const, const int& end_const);
+//void s_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
+
+void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr);
+
+void t_for(ast::PrimVar& v, const int& init_const, TreeBuilder end_expr);
+
+void t_for(ast::PrimVar& v, TreeBuilder init_expr,   const int& end_const);
+void t_for(ast::PrimVar& v, TreeBuilder init_const,  Var& end_const);
+
+void t_for(ast::PrimVar& v, const int& init_const, const int& end_const);
+
+void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const);
+
+void t_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
+void t_for(ast::PrimVar& v,  const int& init_const,  Var& end_const);
+
+void w_while(TreeBuilder test_expr);
+
+void w_while(const int& test_const);
+    
+
+void w_if(TreeBuilder test_expr);
+
+void w_if(const int& test_const);
+
+void w_if(TreeBuilder test_expr, double exec_prob);
+
+void w_if(const int& test_const, double exec_prob);
+
+void w_else();
+
+void w_else_if(TreeBuilder test_expr);
+
+void w_else_if(TreeBuilder test_const);
+
+void end();
+
+void DumpStats();
+
+ast::Expression* ToAccess(const int& c);
+ast::Statement* ToAssignment(const int& c, ast::Expression* body_e);
+ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
+ast::Statement* ToUpdateOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
+
+void Init(int argc, char** argv);
+
+void Run();
+
+void Done();
+void Done(std::string);
+
+Tracer& T(int l = 0);
+Tracer& ASSERT(bool term);
+
+
 // A "program" is the environment in which we build up the syntax tree
 // for processing. 
 
@@ -271,6 +330,12 @@ class Program
   std::stack<ast::Statement*> loop_stack_;
   std::string name_ = "";
 
+  void AddInitialStatements();
+  
+  void AddEndStatements()
+  {
+    end();
+  }
   
   // Add
   // Add a statement to the program.
@@ -338,10 +403,16 @@ class Program
   // Run
   // Execute the program after the syntax tree has been constructed.
   
-  void Run()
+  void Run(int num_flat_partitions)
   {
-    ast::ExecutionContext ctx;
-    beginning_stmt_->Execute(ctx);
+    ast::ExecutionContext ctx(num_flat_partitions);
+    beginning_stmt_->Init(ctx);
+    ast::Statement* continuation = beginning_stmt_->Execute(ctx);
+    // Keep executing until nothing is paused.
+    while (continuation != NULL)
+    {
+      continuation = beginning_stmt_->Execute(ctx);
+    }
   }
   
   void SetName(const std::string& nm)
@@ -531,19 +602,21 @@ class TensorDisambiguator : public Container
   ast::PrimTensor& target_;
   std::list<ast::Expression*> idx_exprs_;
   int tile_level_ = 0;
+  int compute_level_ = 0;
   int port_ = 0;
 
-  TensorDisambiguator(ast::PrimTensor& v, const std::list<ast::Expression*>& e, int tile_level, int port = 0) : 
+  TensorDisambiguator(ast::PrimTensor& v, const std::list<ast::Expression*>& e, int tile_level, int compute_level, int port = 0) : 
     target_(v), 
     idx_exprs_(e),
     tile_level_(tile_level),
+    compute_level_(compute_level),
     port_(port)
   {
   }
  
   ast::TensorAccess* ToTensorAccess() const
   {
-    ast::TensorAccess* access_e = new ast::TensorAccess(target_, idx_exprs_, tile_level_, port_);
+    ast::TensorAccess* access_e = new ast::TensorAccess(target_, idx_exprs_, tile_level_, compute_level_, port_);
     return access_e;
   }
 
@@ -554,7 +627,7 @@ class TensorDisambiguator : public Container
 
   virtual ast::Statement* ToAssignment(ast::Expression* body_e)
   {
-    ast::TensorAssignment* assign_stmt = new ast::TensorAssignment(target_, idx_exprs_, body_e, tile_level_, port_);
+    ast::TensorAssignment* assign_stmt = new ast::TensorAssignment(target_, idx_exprs_, body_e, tile_level_, compute_level_, port_);
     return assign_stmt;
   }
 
@@ -593,17 +666,17 @@ class Tensor : public ast::PrimTensor
  private:
   void Init()
   {
-    std::shared_ptr<buff::BufferModel> offchip(new buff::OffChipBufferModel("offchip_" + name_, vals_.size()));
+    std::shared_ptr<buff::BufferModel> backing(new buff::BackingBufferModel("backing_" + name_, vals_.size()));
     std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>> 
-        offchip_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, offchip));
+        backing_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, backing));
     // Set up tile-level tracking state.
     id_ = all_tensors.size();
     tile_level_deliminators.push_back(std::vector<std::deque<int>>());
     current_tile_level.push_back(std::vector<int>({0}));
     all_tensors.push_back(this);
-    // Add port 0, and add the offchip buffer to it.
+    // Add port 0, and add the backing buffer to it.
     AddPort();
-    buffer_levels_[0]->push_back(offchip_vec);
+    buffer_levels_[0]->push_back(backing_vec);
   }
 
  public:
@@ -644,7 +717,7 @@ class Tensor : public ast::PrimTensor
   
   TensorDisambiguator operator[](TreeBuilder idx_expr)
   {
-    TensorDisambiguator vd(*this, {idx_expr.expr_}, current_tile_level[id_][port_], port_);
+    TensorDisambiguator vd(*this, {idx_expr.expr_}, current_tile_level[id_][port_], current_global_tile_level, port_);
     return vd;
   }
 
@@ -666,7 +739,7 @@ class Tensor : public ast::PrimTensor
     return this->operator[](TreeBuilder(body_e));
   }
 
-  void SetOffchipRowBufferWidth(int size)
+  void SetBackingRowBufferWidth(int size)
   {
     (*buffer_levels_[0])[0]->at(0)->SetBufferWidth(size);
   }
@@ -677,7 +750,7 @@ class Tensor : public ast::PrimTensor
     AddTileLevel(size);
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 1, int granularity = 1, int port = 0)
+  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
   {
       
     user_tracer_.ASSERT(size > 0) << "AddTileLevel(): size must be greater than 0." << EndT;
@@ -694,23 +767,35 @@ class Tensor : public ast::PrimTensor
 
     auto backing_it = buffer_levels_[port]->back()->begin();
 
-    // Record where this tile level should be removed from the stack of tiles.
     current_tile_level[id_][port]++;
+
+    // The first AddTileLevel after one (or more) s_for increments the compute level.
+    if (need_global_tile_level || current_tile_level[id_][port] > max_tile_level)
+    {
+      current_global_tile_level++;
+      if (current_global_tile_level+1 > compute_tile_levels.size())
+      {
+        compute_tile_levels.push_back(compute_tile_levels.back());
+      }
+      global_tile_level_deliminators.push_back(spatial_partition_levels.size());
+      need_global_tile_level = false;
+    }
+    
+    // Record where this tile level should be removed from the stack of tiles.
     if (current_tile_level[id_][port] > max_tile_level)
     {
       max_tile_level = current_tile_level[id_][port];
       tile_level_spatial_expansions.push_back(1);
-      current_global_tile_level++;
-      global_tile_level_deliminators.push_back(spatial_partition_levels.size());
     }
-    tile_level_deliminators[id_][port].push_back(spatial_partition_levels.size());
 
-    // Finalize the number of tile levels the old buffer level spans
+    // Tell the backing stores they are done serving compute.
     for (auto& backing_store : (*buffer_levels_[port]->back()))
     {
       backing_store->ending_global_tile_level_ = current_global_tile_level;
     }
     
+    tile_level_deliminators[id_][port].push_back(spatial_partition_levels.size());
+
     for (int x = 0; x < num_flat; x++)
     {
       std::string nm = name_;
@@ -906,7 +991,7 @@ class TensorPort
   
   TensorDisambiguator operator[](TreeBuilder idx_expr)
   {
-    TensorDisambiguator vd(*target_, {idx_expr.expr_}, current_tile_level[target_->id_][port_], port_);
+    TensorDisambiguator vd(*target_, {idx_expr.expr_}, current_tile_level[target_->id_][port_], current_global_tile_level, port_);
     return vd;
   }
 
@@ -928,7 +1013,7 @@ class TensorPort
     return this->operator[](TreeBuilder(body_e));
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 1, int granularity = 1)
+  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1)
   {
     target_->AddTileLevel(size, shrink_granularity, granularity, port_);
   }
@@ -1088,61 +1173,6 @@ class VecOut : public Vec, public OutToFile, public Traceable
   }
 };
 
-
-void s_for(ast::PrimVar& v, const int& init_const, const int& end_const);
-void s_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
-
-void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr);
-
-void t_for(ast::PrimVar& v, const int& init_const, TreeBuilder end_expr);
-
-void t_for(ast::PrimVar& v, TreeBuilder init_expr,   const int& end_const);
-void t_for(ast::PrimVar& v, TreeBuilder init_const,  Var& end_const);
-
-void t_for(ast::PrimVar& v, const int& init_const, const int& end_const);
-
-void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const);
-
-void t_for(ast::PrimVar& v,  Var& init_const,  Var& end_const);
-void t_for(ast::PrimVar& v,  const int& init_const,  Var& end_const);
-
-void w_while(TreeBuilder test_expr);
-
-void w_while(const int& test_const);
-    
-
-void w_if(TreeBuilder test_expr);
-
-void w_if(const int& test_const);
-
-void w_if(TreeBuilder test_expr, double exec_prob);
-
-void w_if(const int& test_const, double exec_prob);
-
-void w_else();
-
-void w_else_if(TreeBuilder test_expr);
-
-void w_else_if(TreeBuilder test_const);
-
-void end();
-
-void DumpStats();
-
-ast::Expression* ToAccess(const int& c);
-ast::Statement* ToAssignment(const int& c, ast::Expression* body_e);
-ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
-ast::Statement* ToUpdateOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
-
-void Init(int argc, char** argv);
-
-void Run();
-
-void Done();
-void Done(std::string);
-
-Tracer& T(int l = 0);
-Tracer& ASSERT(bool term);
 /*
 class CompressedTensor
 {

@@ -37,13 +37,17 @@ namespace whoop
 
 Program the_program{};
 StatsCollection top_stats{"top"};
-std::deque<int> spatial_partition_levels{};
+std::deque<std::pair<ast::SpatialFor*, int>> spatial_partition_levels{};
+std::deque<int> spatial_partition_levels_sanity_check{};
 std::vector<std::vector<std::deque<int>>> tile_level_deliminators{};
 std::vector<std::vector<int>> current_tile_level{};
 int max_tile_level = 0;
 std::deque<int> global_tile_level_deliminators{};
+std::vector<int> compute_tile_levels{1};
 int current_global_tile_level = 0;
+bool need_global_tile_level = false;
 std::vector<int> tile_level_spatial_expansions{1};
+int max_flat_expansion = 1;
 std::list<InFromFile*> need_input{};
 std::list<OutToFile*> need_output{};
 std::list<Tensor*> all_tensors{};
@@ -115,20 +119,53 @@ void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
   ast::VarAssignment* incr_s = new ast::VarAssignment(v, incr_e);
   // Now put it all together.
   ast::SpatialFor* stmt = new ast::SpatialFor(end_const, init_s, test_e, incr_s);
-  spatial_partition_levels.push_back(end_const);
-  tile_level_spatial_expansions[max_tile_level] *= end_const;
-  for (auto& t : all_tensors)
-  {
-    t->ExpandDatapaths(max_tile_level, end_const);
-  }
   the_program.AddIncomplete(stmt);
+  // Mark the spatial expansions as proper.
+  int height = ActualSpatialPartitionHeight(true);
+  if (height >= spatial_partition_levels_sanity_check.size())
+  {
+    // This is a new "highest" spatial for level, so
+    // expand all previous spatial fors in the stack by our number.
+    for (auto sp : spatial_partition_levels)
+    {
+      if (sp.first != NULL)
+      {
+        sp.first->flat_expansion_factor_ *= end_const;
+      }
+    }
+    spatial_partition_levels.push_back(std::make_pair(stmt, end_const));
+    spatial_partition_levels_sanity_check.push_back(end_const);
+    tile_level_spatial_expansions[max_tile_level] *= end_const;
+    need_global_tile_level = true;
+    compute_tile_levels.back() *= end_const;
+  }
+  else
+  {
+    // The stack has been popped previously, so
+    // do a sanity check that the new sequential loops are consistent. 
+    bool is_consistent = spatial_partition_levels_sanity_check[height] == end_const;
+    user_tracer_.ASSERT(is_consistent) << "Inconsistent spatial partitioning across sequential loops. Previously level " << height  << " was: " << spatial_partition_levels_sanity_check[height] << ", now it is: " << end_const << EndT;
+    
+    // Just re-push, but don't re-mutate anything.
+    spatial_partition_levels.push_back(std::make_pair(stmt, end_const));
+    // If I'm not the last "old" s_for...
+    if (height != spatial_partition_levels_sanity_check.size() - 1)
+    {
+      // Fixup our expansion factor by any "future" s_fors we know are coming.
+       for (auto it = spatial_partition_levels_sanity_check.begin() + height + 1; it != spatial_partition_levels_sanity_check.end(); it++)
+      {
+        stmt->flat_expansion_factor_ *= (*it);
+      }
+    }
+  }
 }
 
+/*
 void s_for(ast::PrimVar& v,  Var& init_const,  Var& end_const)
 {
     s_for(v, init_const.Access(), end_const.Access());
 }
-
+*/
 void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr)
 {
   // The initialization statement is always a var assignment for now.
@@ -143,7 +180,7 @@ void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr)
   ast::VarAssignment* incr_s = new ast::VarAssignment(v, incr_e);
   // Now put it all together.
   ast::TemporalFor* stmt = new ast::TemporalFor(init_s, test_e, incr_s);
-  spatial_partition_levels.push_back(1);
+  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
   the_program.AddIncomplete(stmt);
 }
 
@@ -198,7 +235,7 @@ void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorD
 void w_while(TreeBuilder test_expr)
 {
   ast::While* stmt = new ast::While(test_expr.expr_);
-  spatial_partition_levels.push_back(1);
+  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
   the_program.AddIncomplete(stmt);
 }
 
@@ -212,7 +249,7 @@ void w_while(const int& test_const)
 void w_if(TreeBuilder test_expr)
 {
   ast::If* stmt = new ast::If(test_expr.expr_);
-  spatial_partition_levels.push_back(1);
+  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
   the_program.AddIncomplete(stmt);
 }
 
@@ -225,7 +262,7 @@ void w_if(const int& test_const)
 void w_if(TreeBuilder test_expr, double exec_prob)
 {
   ast::If* stmt = new ast::If(test_expr.expr_, exec_prob);
-  spatial_partition_levels.push_back(1);
+  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
   the_program.AddIncomplete(stmt);
 }
 
@@ -364,7 +401,7 @@ void LogTensorTopology(std::string fname)
 
   for (auto it = all_tensors.begin(); it != all_tensors.end(); it++)
   {
-    (*it)->LogTopologyConnections(ofile, max_tile_level + 1);
+    (*it)->LogTopologyConnections(ofile);
   }
   ofile << std::endl;
 }
@@ -391,7 +428,23 @@ int NumSpatialPartitionsFlattened()
   int res = 1;
   for (auto it = spatial_partition_levels.begin(); it != spatial_partition_levels.end(); it++)
   {
-    res *= (*it);
+    res *= (*it).second;
+  }
+  return res;
+}
+
+int ActualSpatialPartitionHeight(int count_ones)
+{
+  int res = 0;
+  for (auto sp : spatial_partition_levels)
+  {
+    if (sp.first != NULL)
+    {
+      if (sp.second != 1 || count_ones)
+      {
+        res++;
+      }
+    }
   }
   return res;
 }
@@ -405,6 +458,7 @@ void Init(int argc, char** argv)
     (*it)->ReadInput();
   }
   the_program.SetName(argv[0]);
+  the_program.AddInitialStatements();
   user_tracer_ = {};
 }
 
@@ -450,23 +504,29 @@ void Done(std::string ofile)
 
 void Run()
 {
+  the_program.AddEndStatements();
+
   user_tracer_.ASSERT(spatial_partition_levels.size() == 0) << "You have a missing end() call in the loop nest -- Please check!" << EndT;
   
-  // Flatten the spatial expansions across tile levels in order to
-  // make the indexing math easy.
-  auto flattened_tile_level_spatial_expansions = tile_level_spatial_expansions;
-  for (int x = 1; x < flattened_tile_level_spatial_expansions.size(); x++)
+  InitializeComputeLogs(compute_tile_levels);
+  
+  int max_flat_expansion = 1;
+  for (auto level : spatial_partition_levels_sanity_check)
   {
-    flattened_tile_level_spatial_expansions[x] *= flattened_tile_level_spatial_expansions[x-1];
+    max_flat_expansion *= level;
   }
-  InitializeComputeLogs(flattened_tile_level_spatial_expansions);
+  
+  for (auto var : all_vars)
+  {
+    var->InitializePartitioning(max_flat_expansion);
+  }
   
   for (auto it = all_tensors.begin(); it != all_tensors.end(); it++)
   {
     (*it)->FixupBufferLevelNumbering();
     (*it)->SetTraceLevel(options::kCurrentTraceLevel);
   }
-  the_program.Run();
+  the_program.Run(max_flat_expansion);
 }
 
 Tracer& T(int l)
@@ -481,5 +541,12 @@ Tracer& ASSERT(bool term)
   return user_tracer_.ASSERT(term);
 }
 
+void Program::AddInitialStatements()
+{
+  // Add an s_for = 0..1 around the whole program...
+  // This keeps things much cleaner with spatial expansion.
+  Var* v = new Var("__root");
+  s_for(*v, 0, 1);
+}
 
 }
