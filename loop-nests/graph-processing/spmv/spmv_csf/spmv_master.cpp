@@ -197,7 +197,7 @@ int main(int argc, char** argv)
     /******************************************************/
     /******************************************************/
 
-//     graphAlg.PageRankNibble_Untiled(0);
+    graphAlg.PageRankNibble_Untiled(0);
     graphAlg.Whoop_PageRankNibble_Untiled(0);
 
     exit(0);

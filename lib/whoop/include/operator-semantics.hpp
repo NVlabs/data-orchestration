@@ -28,27 +28,29 @@
 #ifndef WHOOP_OPERATOR_SEMANTICS_HPP_
 #define WHOOP_OPERATOR_SEMANTICS_HPP_
 
+#include "typedefs.hpp"
+
 namespace whoop
 {
 
-  int PlusOp(const int& x, const int& y);
-  int MinusOp(const int& x, const int& y);
-  int MulOp(const int& x, const int& y);
-  int DivOp(const int& x, const int& y);
-  int ModOp(const int& x, const int& y);
-  int EQOp(const int&x , const int& y);
-  int NEQOp(const int&x , const int& y);
-  int GTEOp(const int& x, const int& y);
-  int LTEOp(const int&x , const int& y);
-  int GTOp(const int& x, const int& y);
-  int LTOp(const int& x, const int& y);
-  int ANDOp(const int& x, const int& y);
-  int OROp(const int& x, const int& y);
-  int BWANDOp(const int& x, const int& y);
-  int BWOROp(const int& x, const int& y);
-  int NOPOp(const int& x, const int& y);
-  int POSTINCOp(const int& x);
-  int PREINCOp(const int& x);
+  DataType_t PlusOp(const DataType_t& x, const DataType_t& y);
+  DataType_t MinusOp(const DataType_t& x, const DataType_t& y);
+  DataType_t MulOp(const DataType_t& x, const DataType_t& y);
+  DataType_t DivOp(const DataType_t& x, const DataType_t& y);
+  DataType_t ModOp(const DataType_t& x, const DataType_t& y);
+  DataType_t EQOp(const DataType_t&x , const DataType_t& y);
+  DataType_t NEQOp(const DataType_t&x , const DataType_t& y);
+  DataType_t GTEOp(const DataType_t& x, const DataType_t& y);
+  DataType_t LTEOp(const DataType_t&x , const DataType_t& y);
+  DataType_t GTOp(const DataType_t& x, const DataType_t& y);
+  DataType_t LTOp(const DataType_t& x, const DataType_t& y);
+  DataType_t ANDOp(const DataType_t& x, const DataType_t& y);
+  DataType_t OROp(const DataType_t& x, const DataType_t& y);
+  DataType_t BWANDOp(const DataType_t& x, const DataType_t& y);
+  DataType_t BWOROp(const DataType_t& x, const DataType_t& y);
+  DataType_t NOPOp(const DataType_t& x, const DataType_t& y);
+  DataType_t POSTINCOp(const DataType_t& x);
+  DataType_t PREINCOp(const DataType_t& x);
 };
 
 #endif

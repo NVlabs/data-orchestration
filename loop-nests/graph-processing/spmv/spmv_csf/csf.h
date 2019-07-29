@@ -1013,114 +1013,155 @@ class GraphAlgorithm
 
         Var v("v"), s("s"), d("d");
         Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update");
+        
 
         Var pos_start("pos_start"), pos_end("pos_end"), p("p");
 
         
-        Vec iters("iters");
+        Vec iters("iters"), frontier_size("frontier_size");
         iters.Resize({1});
         iters.At(0) = 0;
+        frontier_size.Resize({1});
 
         weight1 = (2*alpha) / (1+alpha);
         weight2 = (1 - alpha) / (1 +  alpha);
 
         frontier_empty = 1;
 
-        // Initialize For This Seed
-        t_for(v, 0, V);
+        // Initialize The State
+        for(int i=0; i<V; i++)
         {
-            (*residual)[v] = 0;
-            (*pageRank)[v] = 0;
-            (*frontier)[v] = 0;
+            residual_prime->At({i}) = 0;
+            residual->At({i}) = 0;
+            pageRank->At({i}) = 0;
+            frontier->At({i}) = 0;
         }
-        end();
-        
-        // Start Page Rank Computation
-        (*frontier)[seed] = 1;
-        (*residual)[seed] = 1;
-        (*residual_prime)[seed] = 1;
-        
+
+        // Sett Up For Seed In
+        frontier->At({seed}) = 1;
+        residual->At({seed}) = 1;
+        residual_prime->At({seed}) = 1;
+
+        //////////////////////////////////////////
+        // Set Up The Whoop State And Start Runs
+        //////////////////////////////////////////
+
         frontier_empty       = 0;
+        frontier_size[0]     = 1;
         
         w_while( frontier_empty == 0 );
         {
-            iters[0] += 1;
+            // Update The Page Rank
+            t_for(v, 0, V);
+            {
+                w_if( (*frontier)[v] == 1 );
+                {
+                    (*pageRank)[v] += weight1 * (*residual)[v];
+                    (*residual_prime)[v] = 0;
+                }
+                end();
+            }
+            end();
+
+            // Propogate The Residuals To Neighbors
+            t_for(s, 0, V);
+            {
+                w_if( (*frontier)[s] == 1 );
+                {
+                    update =  weight2 * (*residual)[s] / (*outDegree)[s];
+
+                    pos_start = (*SegmentArray)[s];
+                    pos_end   = (*SegmentArray)[s+1];
+
+                    t_for(p,pos_start,pos_end);
+                    {
+                        d = (*CoordinateArray)[p];
+                        (*residual_prime)[d] += update;
+                    }
+                    end();
+                }
+                end();
+            }
+            end();
 
             // Generate The New Frontier
             frontier_empty = 1;
+            frontier_size[0]  = 0;
+            
+            t_for(v, 0, V);
+            {
+                // copy the update residuals
+                (*residual)[v] = (*residual_prime)[v];
+
+                // Generate the new frontier
+                w_if( (*outDegree)[v] && ((*residual)[v] >= ((*outDegree)[v] * epsilon)) );
+                {
+                    (*frontier)[v]    = 1;
+                    frontier_empty    = 0;
+                    frontier_size[0] += 1;
+                }
+                w_else();
+                {
+                    (*frontier)[v] = 0;
+                }
+                end();
+            }
+            end();
+
+            iters[0] += 1;
+
+            /////////////////////////////////////////////////////
+            ////  THE BELOW IS FOR DEBUGGING TO MATCH STATE    //
+            /////////////////////////////////////////////////////
+//             w_if( (iters[0] == 1) && (frontier_size[0] != 95) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 2) && (frontier_size[0] != 1682) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 3) && (frontier_size[0] != 2040) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 11) && (frontier_size[0] != 113) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 8) && (frontier_size[0] != 348) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+            /////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////
+
+// 
+//             w_if( (iters[0] > 4) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+
         }
         end();
-
-            
-//             // Update The Page Rank
-//             t_for(v, 0, V);
-//             {
-//                 w_if( (*frontier)[v] == 1 );
-//                 {
-//                     (*pageRank)[v] += weight1 * (*residual)[v];
-//                     (*residual_prime)[v] = 0;
-//                 }
-//                 end();
-//             }
-//             end();
-// 
-//             // Propogate The Residuals To Neighbors
-//             t_for(s, 0, V);
-//             {
-//                 w_if( (*frontier)[s] == 1 );
-//                 {
-//                     update =  weight2 * (*residual)[s] / (*outDegree)[s];
-// 
-//                     pos_start = (*SegmentArray)[s];
-//                     pos_end   = (*SegmentArray)[s+1];
-// 
-//                     t_for(p,pos_start,pos_end);
-//                     {
-//                         d = (*CoordinateArray)[p];
-//                         (*residual_prime)[d] += update;
-//                     }
-//                     end();
-//                 }
-//                 end();
-//             }
-//             end();
-// 
-//             // Generate The New Frontier
-//             frontier_empty = 1;
-
-//             t_for(v, 0, V);
-//             {
-//                 // copy the update residuals
-//                 (*residual)[v] = (*residual_prime)[v];
-//             
-//                 // Generate the new frontier
-//                 w_if( (*outDegree)[v] && ((*residual)[v] >= ((*outDegree)[v] * epsilon)) );
-//                 {
-//                     (*frontier)[v] = 1;
-//                     frontier_empty = 0;
-//                 }
-//                 w_else();
-//                 {
-//                     (*frontier)[v] = 0;
-//                 }
-//                 end();
-//             }
-//             end();
-// 
-// 
-// 
-//             // Generate The New Frontier
-//             frontier_empty = 1;
-// 
-//         }
-//         end();
 
         cout<<endl;
         cout<< "\tStarting WHOOP Mode..." <<endl;
         whoop::Run();
         cout<< "\tFinished WHOOP Mode..." <<endl;
 
-        std::cout<<"Number of Iterations: "<<iters.At(0)<<std::endl;
+        std::cout<<"Number of Iterations: "<<iters.At(0)<<" Frontier Size: "<<frontier_size.At(0)<<std::endl;
 
         whoop::Done();
     }
@@ -1129,6 +1170,7 @@ class GraphAlgorithm
     {
         CalculateDegrees();
 
+        int iters = 0;
         int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
         double weight1, weight2, update;
 
@@ -1141,6 +1183,7 @@ class GraphAlgorithm
         // Initialize For This Seed
         for(int v=0; v<V; v++)
         {
+            residual_prime->At({v}) = 0;
             residual->At({v}) = 0;
             pageRank->At({v}) = 0;
             frontier->At({v}) = 0;
@@ -1156,7 +1199,7 @@ class GraphAlgorithm
         
         while( frontier_empty == 0 )
         {
-            std::cout<<"Frontier Size: "<<frontier_size<<std::endl;
+            std::cout<<iters<<" -- Frontier Size: "<<frontier_size<<std::endl;
             
             // Update The Page Rank
             for(int v=0; v<V; v++)
@@ -1165,6 +1208,7 @@ class GraphAlgorithm
                 {
                     pageRank->At({v}) += weight1 * residual->At({v});
                     residual_prime->At({v}) = 0;
+//                     cout<<"\tPage Rank of: "<<v<<" is: "<<pageRank->At({v})<<" weight1: "<<weight1<<" residual: "<<residual->At({v})<<endl;
                 }
             }
 
@@ -1182,6 +1226,9 @@ class GraphAlgorithm
                     {
                         d = CoordinateArray->At({p});
                         residual_prime->At({d}) += update;
+
+//                         cout<<"\tResidual_prime of: "<<d<<" is: "<<residual_prime->At({d})<<endl;
+
                     }
                 }
             }
@@ -1198,6 +1245,7 @@ class GraphAlgorithm
                 // Generate the new frontier
                 if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
                 {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
                     frontier->At({v}) = 1;
                     frontier_empty = 0;
                     frontier_size++;
@@ -1207,6 +1255,7 @@ class GraphAlgorithm
                     frontier->At({v}) = 0;
                 }
             }
+            iters++;
         }
     }
 

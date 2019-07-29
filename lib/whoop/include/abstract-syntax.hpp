@@ -54,9 +54,7 @@
 #include "pure-abstract-syntax-types.hpp"
 #include "pure-abstract-syntax.hpp"
 
-typedef unsigned long UINT64;
-// typedef int DataType_t;
-typedef double DataType_t;
+#include "typedefs.hpp"
 
 namespace whoop
 {
@@ -186,7 +184,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = index;
-    assert(requestor_idx < 64);
+    ASSERT(requestor_idx < 64) << "Requestor index exceeded multicast mask size: " << requestor_idx << " (connected fronting buffers: " << fronting_buffers_.size() << ")" << EndT;
     info.receiver_mask_[requestor_idx] = true;
     coalescing_buffer_.push_back(std::make_pair(address, info));
     return &coalescing_buffer_.back().second;
@@ -198,7 +196,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // Keep track of last accessed address.
     BuffetLogInfo info;
     info.index_ = index;
-    assert(requestor_idx < 64);
+    ASSERT(requestor_idx < 64) << "Requestor index exceeded multicast mask size: " << requestor_idx << "(connected fronting buffers: " << fronting_buffers_.size() << ")" << EndT;
     info.receiver_mask_[requestor_idx] = true;
     info.updater_mask_[requestor_idx] = true;
     info.is_dirty_ = true;
@@ -299,7 +297,6 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   // E.g. the L2 weights tile may be the last tile of weights.
   int starting_global_tile_level_;
   int ending_global_tile_level_;
-  std::vector<int> num_datapaths_;
   int local_spatial_idx_;
   
   explicit BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "") :
@@ -307,8 +304,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     TraceableBuffer(nm),
     level_(level),
     starting_global_tile_level_(starting_tile_level),
-    ending_global_tile_level_(starting_tile_level + 1),
-    num_datapaths_(1, 1),
+    ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
     fronting_buffers_{}
   {
@@ -318,18 +314,18 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   {
     command_log_.Dump(ostr, Traceable::GetName() + "_commands", "symphony::modules::LocalBuffet");
     ostr << "," << std::endl;
-    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LocalPatternGenerator");
+    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LocalPatternGenerator");
+    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LocalPatternGenerator");
+    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LocalPatternGenerator");
+    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LocalGatedPatternGenerator");
     ostr << "," << std::endl;
-    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalPatternGenerator");
+    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalGatedPatternGenerator");
   }
 
-  void LogTopologyModule(std::ostream& ostr)
+  void LogTopologyModule(std::ostream& ostr, int expansion_factor)
   {  
     ostr << "  - type: module" << std::endl;
     ostr << "    class: symphony::modules::BuffetComplex" << std::endl;
@@ -337,12 +333,12 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: false" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"num_receivers = " << GetNumReceivers() << "\""  << std::endl;
-    ostr << "        - \"num_updaters = " << GetNumReceivers() << "\""  << std::endl;
+    ostr << "        - \"num_receivers = " << GetNumReceivers(expansion_factor) << "\""  << std::endl;
+    ostr << "        - \"num_updaters = " << GetNumReceivers(expansion_factor) << "\""  << std::endl;
     ostr << std::endl;
   }
 
-  void LogTopologyConnections(std::ostream& ostr, int id, int local_spatial_idx, int max_tile_level)
+  void LogTopologyConnections(std::ostream& ostr, int id, int spatial_idx, int expansion_factor)
   {
     for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
     {
@@ -363,16 +359,17 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     // The buffer feeds datapaths between it and the next tile level 
     // where this tensor participates.
     // If there is no such tile level then it covers all the remaining levels.
-    int end_level = ending_global_tile_level_ == starting_global_tile_level_ ? max_tile_level : ending_global_tile_level_;
+    int end_level = ending_global_tile_level_ == starting_global_tile_level_ ? compute_logs.size() : ending_global_tile_level_;
+    int local_dp_index = 0;
     for (int tile_level = starting_global_tile_level_; tile_level < end_level; tile_level++)
     {
-      int num_dpaths = num_datapaths_[tile_level - starting_global_tile_level_];
+      int num_dpaths = compute_logs[tile_level].size() / expansion_factor;
       for (int x = 0; x < num_dpaths; x++)
       {
-        int dp_idx = local_spatial_idx * num_dpaths + x;
+        int dp_idx = spatial_idx * num_dpaths + x;
         ostr << "      - src:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
-        ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + x << std::endl;
+        ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + local_dp_index << std::endl;
         ostr << "        dst:" << std::endl;
         ostr << "        - name: compute_engine_" << tile_level << "_" << dp_idx << std::endl;
         ostr << "          port-name: input_" << id << std::endl; // Note: This index could be smarter.
@@ -381,7 +378,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         ostr << "          port-name: output_" << id << std::endl;
         ostr << "        dst:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
-        ostr << "          port-name: update_data_in_" << fronting_buffers_.size() + x << std::endl;
+        ostr << "          port-name: update_data_in_" << fronting_buffers_.size() + local_dp_index << std::endl;
+        local_dp_index++;
       }
     }
   }
@@ -390,22 +388,27 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   {
     command_log_.Resize(size);
   }
- 
-  void ExpandDatapaths(int global_tile_level, int num)
-  {
-    int tile_level = global_tile_level - starting_global_tile_level_;
-    if (tile_level >= num_datapaths_.size())
-    {
-      // Any unmentioned layers must have 1 datapath.
-      num_datapaths_.resize(tile_level+1, 1);
-    }
-    num_datapaths_[tile_level] *= num;
-  }
 
-  int GetNumReceivers()
+  int GetNumReceivers(int expansion_factor)
   {
-    int flat_datapaths = std::accumulate(num_datapaths_.begin(), num_datapaths_.end(), 0);
-    return fronting_buffers_.size() + flat_datapaths;
+    int flat_datapaths = 0;
+    auto end_it = ending_global_tile_level_ == starting_global_tile_level_ ? compute_logs.end() : compute_logs.begin() + ending_global_tile_level_;
+    for (auto it = compute_logs.begin() + starting_global_tile_level_; it != end_it; it++)
+    {
+      flat_datapaths += (*it).size();
+    }
+    return fronting_buffers_.size() + (flat_datapaths/expansion_factor);
+  }
+  
+  int GetComputeIndex(int tile_level, int local_spatial_idx, int expansion_factor)
+  {
+    int flat_datapaths = 0;
+    assert(tile_level < compute_logs.size());
+    for (auto it = compute_logs.begin() + starting_global_tile_level_; it != compute_logs.begin() + tile_level; it++)
+    {
+      flat_datapaths += (*it).size() / expansion_factor;
+    }
+    return fronting_buffers_.size() + flat_datapaths + local_spatial_idx;
   }
  
   virtual void Access(int address, int requestor_idx) = 0;
@@ -416,7 +419,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   virtual void SetBufferWidth(int width) = 0;
 };
 
-class OffChipBufferModel : public BufferModel
+class BackingBufferModel : public BufferModel
 {
  private:
   int GetIdx(int address)
@@ -430,13 +433,13 @@ class OffChipBufferModel : public BufferModel
 
     if(rowbuffer_active_idx_ == addr_idx)
     {
-      IncrStat("Offchip row buffer hit");
+      IncrStat("Backing row buffer hit");
       T(4) << "Row buffer hit for read to address " << address << EndT;
     }
     else
     {
       rowbuffer_active_idx_ = addr_idx;
-      IncrStat("Offchip row buffer miss");
+      IncrStat("Backing row buffer miss");
       T(4) << "Row buffer miss for read to address " << address << EndT;
     }
   }
@@ -445,10 +448,10 @@ class OffChipBufferModel : public BufferModel
   int rowbuffer_active_idx_ = -1;
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
-  OffChipBufferModel(const std::string& nm, int size) : 
+  BackingBufferModel(const std::string& nm, int size) : 
     BufferModel(0, 0, 0, nm)
   {
-    AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (offchip memory)" + nm);
+    AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (backing memory)" + nm);
     command_log_.Init(size, 0, false);
   }
 
@@ -456,13 +459,13 @@ class OffChipBufferModel : public BufferModel
   {   
     if (CheckCoalescing(address, requestor_idx, false))
     {  
-      IncrStat("Offchip multicasts");
+      IncrStat("Backing multicasts");
       T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
     }
     else
     {
       CheckRowBufferHit(address);
-      IncrStat("Offchip reads");
+      IncrStat("Backing reads");
       T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
       LogAccess(address, requestor_idx, address);
       TryToDrainOldestAccesses();
@@ -473,14 +476,14 @@ class OffChipBufferModel : public BufferModel
   {
     if (CheckCoalescing(address, requestor_idx, true))
     {  
-      IncrStat("Offchip multi-reduces");
+      IncrStat("Backing multi-reduces");
       T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
     }
     else
     {
       CheckRowBufferHit(address);
 
-      IncrStat("Offchip updates");
+      IncrStat("Backing updates");
       T(4) << "Update, address: " << address  << " by requestor: " << requestor_idx << EndT;
       LogUpdate(address, requestor_idx, address);
       TryToDrainOldestAccesses();
@@ -923,31 +926,35 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const DataType_t& new_val, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const DataType_t& new_val, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );
-    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );
+    int num_buffers = (*buffer_levels_[port_idx])[access_tile_level]->size();
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / num_buffers);
 
     IncrStat("Tensor updates");
     UINT64 idx = FlattenIndices(idxs);
     vals_[idx] = new_val;
-    auto buffer_to_access = (*(*buffer_levels_[port_idx])[tile_level])[buffer_spatial_part_idx];
-    // Datapath access ids are offset by the fronting buffers.
-    buffer_to_access->Update(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
+    auto buffer_to_access = (*(*buffer_levels_[port_idx])[access_tile_level])[buffer_spatial_part_idx];
+    // Datapath access ids are offset by the fronting buffers and any previous datapaths.
+    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx, num_buffers);
+    buffer_to_access->Update(idx, my_final_idx);
   }
   
-  DataType_t Access(const std::vector<int>& idxs, const int& tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
+  DataType_t Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
-    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[tile_level]->size(), num_spatial_partitions );      
-    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / (*buffer_levels_[port_idx])[tile_level]->size());
+    int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );      
+    int num_buffers = (*buffer_levels_[port_idx])[access_tile_level]->size();
+    int local_spatial_idx = spatial_part_idx % (num_spatial_partitions / num_buffers);
 
     IncrStat("Tensor reads");
     UINT64 idx = FlattenIndices(idxs);
-    auto buffer_to_access = (*(*buffer_levels_[port_idx])[tile_level])[buffer_spatial_part_idx];
-    // Datapath access ids are offset by the fronting buffers.
-    buffer_to_access->Access(idx, buffer_to_access->fronting_buffers_.size() + local_spatial_idx);
+    auto buffer_to_access = (*(*buffer_levels_[port_idx])[access_tile_level])[buffer_spatial_part_idx];
+    // Datapath access ids are offset by the fronting buffers and any previous datapaths.
+    int my_final_idx = buffer_to_access->GetComputeIndex(compute_tile_level, local_spatial_idx, num_buffers);
+    buffer_to_access->Access(idx, my_final_idx);
     return vals_[idx];
   }
 
@@ -1004,14 +1011,14 @@ class PrimTensor : public StatsCollection
     dim_sizes_.assign(dim_sizes.rbegin(), dim_sizes.rend());
     UINT64 s = FlattenSizes(dim_sizes_);
     vals_.resize(s);
-    // Tell the offchip buffer the new size.
+    // Tell the backing buffer the new size.
     (*buffer_levels_[0])[0]->at(0)->Resize(s);
   }
   
   // Used when loading tensors from files to cleanup buffer model.
   void FixupSize()
   {
-    // Tell the offchip buffer the new size.
+    // Tell the backing buffer the new size.
     UINT64 s = FlattenSizes(dim_sizes_);
     (*buffer_levels_[0])[0]->at(0)->Resize(s);
   }
@@ -1054,25 +1061,13 @@ class PrimTensor : public StatsCollection
     }
   }
 
-  void ExpandDatapaths(int global_tile_level, int num)
-  {
-    for (auto port_it : buffer_levels_)
-    {
-      auto last_level = (*port_it).back();
-      for (auto buf_it : *last_level)
-      {
-        (*buf_it).ExpandDatapaths(global_tile_level, num);
-      }
-    }
-  }
-
   void DrainAll()
   {
-    // Purposely iterate ports backwards since offchip is always port 0.
+    // Purposely iterate ports backwards since backing is always port 0.
     for (auto port_rit = buffer_levels_.rbegin(); port_rit != buffer_levels_.rend(); port_rit++)
     {
       // Purposely iterate from closer levels on down, for maximum locality.
-      // Skip level 0 since it is the same offchip for each port and handled specially
+      // Skip level 0 since it is the same backing for each port and handled specially
       for (auto level_rit = (*port_rit)->rbegin(); level_rit != std::prev((*port_rit)->rend()); level_rit++)
       {
         for (auto buf : *(*level_rit))
@@ -1081,7 +1076,7 @@ class PrimTensor : public StatsCollection
         }
       }
     }
-    // Every tensor has an offchip.
+    // Every tensor has a backing level.
     (*buffer_levels_[0])[0]->at(0)->DrainAll();
   }
   
@@ -1105,7 +1100,7 @@ class PrimTensor : public StatsCollection
   {
     for (auto& port : buffer_levels_)
     {
-      // Skip the offchip level as it is repeated across ports.
+      // Skip the backing level as it is repeated across ports.
       for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         for (auto& buff : *(*level_it))
@@ -1115,7 +1110,7 @@ class PrimTensor : public StatsCollection
         }
       }
     }
-    // Every tensor has an offchip.
+    // Every tensor has a backing level.
     (*buffer_levels_[0])[0]->at(0)->LogActivity(ostr);
   }
 
@@ -1123,36 +1118,36 @@ class PrimTensor : public StatsCollection
   {
     for (auto& port : buffer_levels_)
     {
-      // Skip the offchip level as it is repeated across ports.
+      // Skip the backing level as it is repeated across ports.
       for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         for (auto& buff : *(*level_it))
         {
-          buff->LogTopologyModule(ostr);
+          buff->LogTopologyModule(ostr, (*level_it)->size());
         }
       }
     }
-    // Every tensor has an offchip.
-    (*buffer_levels_[0])[0]->at(0)->LogTopologyModule(ostr);
+    // Every tensor has a backing level.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyModule(ostr, 1);
   }
 
-  void LogTopologyConnections(std::ostream& ostr, int max_tile_level)
+  void LogTopologyConnections(std::ostream& ostr)
   {
     for (auto& port : buffer_levels_)
     {
-      // Skip the offchip level as it is repeated across ports.
+      // Skip the backing level as it is repeated across ports.
       for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
       {
         int local_spatial_idx = 0;
         for (auto& buff : *(*level_it))
         {
-          buff->LogTopologyConnections(ostr, id_, local_spatial_idx, max_tile_level);
+          buff->LogTopologyConnections(ostr, id_, local_spatial_idx, (*level_it)->size());
           local_spatial_idx++;
         }
       }
     }
-    // Every tensor has an offchip.
-    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 0, max_tile_level);
+    // Every tensor has a backing level.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 0, 1);
   }
 };
 
@@ -1261,7 +1256,7 @@ class Expression : public ExecTraceable
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return 0;
   }
@@ -1286,7 +1281,7 @@ class VarAccess : public Expression
     return expr;
   }
   
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return target_.Access(ctx.FlatBegin(), ctx.FlatEnd());
   }
@@ -1321,12 +1316,12 @@ class TensorAccess : public Expression
     return converted_expr;
   }
   
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
     compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogInputTensor(target_.id_);
-    return target_.Access(v, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
+    return target_.Access(v, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
   }
 };
 
@@ -1336,9 +1331,9 @@ class BinaryOp : public Expression
  public:
   Expression* src1_;
   Expression* src2_;
-  int (*op_)(const int& s1, const int& s2);
+  DataType_t (*op_)(const DataType_t& s1, const DataType_t& s2);
   
-  BinaryOp(int (*o)(const int& s1, const int& s2), Expression* s1, Expression* s2) :
+  BinaryOp(DataType_t (*o)(const DataType_t& s1, const DataType_t& s2), Expression* s1, Expression* s2) :
     src1_(s1), src2_(s2), op_(o)
   {
   }
@@ -1384,10 +1379,10 @@ class BinaryOp : public Expression
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
-    int v1 = src1_->Evaluate(ctx);
-    int v2 = src2_->Evaluate(ctx);
+    DataType_t v1 = src1_->Evaluate(ctx);
+    DataType_t v2 = src2_->Evaluate(ctx);
     return op_(v1, v2);
   }
 };
@@ -1397,9 +1392,9 @@ class UnaryOp : public Expression
 {
  public:
   Expression* src1_;
-  int (*op_)(const int& s);
+  DataType_t (*op_)(const DataType_t& s);
 
-  UnaryOp(int (*o)(const int& s1), Expression* s1) :
+  UnaryOp(DataType_t (*o)(const DataType_t& s1), Expression* s1) :
     src1_(s1), op_(o)
   {
   }
@@ -1420,9 +1415,9 @@ class UnaryOp : public Expression
     return expr;    
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
-    int v1 = src1_->Evaluate(ctx);
+    DataType_t v1 = src1_->Evaluate(ctx);
     return op_(v1);
   }
 };
@@ -1431,9 +1426,9 @@ class UnaryOp : public Expression
 class Constant : public Expression
 {
  public:
-  const int val_;
+  const DataType_t val_;
   
-  Constant(const int& v) : val_(v) {}
+  Constant(const DataType_t& v) : val_(v) {}
 
   virtual std::shared_ptr<timewhoop::Expression> ConvertExpression()
   {
@@ -1441,7 +1436,7 @@ class Constant : public Expression
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return val_;
   }
@@ -1455,6 +1450,7 @@ class Statement : public ExecTraceable
   Statement* next_ = NULL;
   Statement* inner_ = NULL;
   Statement* else_ = NULL;
+  std::vector<Statement*> partition_continuations_;
 
   virtual std::shared_ptr<timewhoop::Statement> ConvertStatement()
   {
@@ -1480,6 +1476,71 @@ class Statement : public ExecTraceable
       // We did our last statment. We are done...
       return NULL;
     }
+  }
+  
+  virtual void Init(ExecutionContext& ctx)
+  {
+    partition_continuations_.resize(ctx.NumSpatialPartitions(), NULL);
+    if (inner_)
+    {
+      inner_->Init(ctx);
+    }
+    if (next_)
+    {
+      next_->Init(ctx);
+    }
+    if( else_) 
+    {
+        else_->Init(ctx);
+    }
+  }
+    
+  bool AllPartitionsDone()
+  {
+    auto it = std::find_if(partition_continuations_.begin(),
+                           partition_continuations_.end(),
+                           [](Statement* s) { return s != NULL; });
+    return it == partition_continuations_.end();
+  }
+
+  bool AnyPartitionIsPaused(int base, int num)
+  {
+    if (partition_continuations_.size() == 0) return false;
+    for (int x = base; x < base + num; x++)
+    {
+      if (partition_continuations_[x] != NULL) return true;
+    }
+    return false;
+  }
+  
+  Statement* ExecuteCurrentInner(ExecutionContext& ctx)
+  {
+    if (inner_)
+    {
+      partition_continuations_[ctx.CurrentSpatialPartition()] = inner_->Execute(ctx);
+    }
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
+  }
+  
+  Statement* ExecuteCurrentElse(ExecutionContext& ctx)
+  {
+    if (else_)
+    {
+      partition_continuations_[ctx.CurrentSpatialPartition()] = else_->Execute(ctx);
+    }
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
+  }
+
+  bool CurrentIsPaused(ExecutionContext& ctx)
+  {
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
+  }
+
+  Statement* ResumeCurrent(ExecutionContext& ctx)
+  {
+    assert(CurrentIsPaused(ctx));
+    partition_continuations_[ctx.CurrentSpatialPartition()] = partition_continuations_[ctx.CurrentSpatialPartition()]->Execute(ctx);
+    return partition_continuations_[ctx.CurrentSpatialPartition()];
   }
 
 };
@@ -1520,7 +1581,7 @@ class VarAssignment : public Statement
     T(4) << "Entering: variable assignment." << EndT;
     if (body_)
     {
-      int res = body_->Evaluate(ctx);
+      DataType_t res = body_->Evaluate(ctx);
       T(3) << "Updating variable " << target_.name_ << " value to: " << res << " (partitions: " << ctx.FlatBegin() <<  ".." << ctx.FlatEnd() - 1 << ")" << EndT;
       target_.Update(ctx.FlatBegin(), ctx.FlatEnd(), res);
     }
@@ -1584,10 +1645,10 @@ class TensorAssignment : public Statement
   {
     T(4) << "Entering: tensor assignment." << EndT;
     auto idxs = EvaluateAll(idx_exprs_, ctx);
-    int res = body_->Evaluate(ctx);
+    DataType_t res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
-    target_.Update(vidxs, res, tile_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
+    target_.Update(vidxs, res, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
     // TODO: Capture multicasting to datapaths.
     compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
     T(4) << "Done: tensor assignment." << EndT;
@@ -1601,9 +1662,7 @@ class While : public Statement
  public:
   Expression* test_expr_;
 
-  bool started_ = false;
-  bool loop_done_; // Dones are DONTCARE when !started_
-  bool body_done_;
+  std::vector<bool> active_;
   
   While(Expression* test_e) :
     test_expr_(test_e)
@@ -1615,75 +1674,61 @@ class While : public Statement
       assert(0);
   }
   
+  virtual void Init(ExecutionContext& ctx)
+  {
+    active_.resize(ctx.NumSpatialPartitions(), false);
+    Statement::Init(ctx);  
+  }
+
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    // If this is our first time, initialize.
-    if (!started_)
+    if (CurrentIsPaused(ctx))
     {
-      T(4) << "Entering: temporal while-loop." << EndT;
-      started_ = true;
-      loop_done_ = false;
-      body_done_ = true;
-    }
-    else if (!loop_done_ && body_done_)
-    {
-      T(4) << "Re-entering: temporal while-loop." << EndT;
-    }
-    
-    // If this loop's body was not done, just jump to it until it is done.
-    if (!body_done_)
-    {
-      T(4) << "Bypassing: temporal while-loop." << EndT;
-      body_done_ = !inner_->Execute(ctx);
-      if (body_done_)
+      T(4) << "Bypassing: while-loop." << EndT;
+      if (ResumeCurrent(ctx))
       {
-        T(4) << "Pausing: temporal while-loop." << EndT;
-      }
-      // We always need to go again in this state... indicate this by returning this
-      return this;
-    }
-    
-    // If this loop was previously finished, just move on...
-    if (!loop_done_)
-    {
-      // See if we need more iterations    
-      loop_done_ = !test_expr_->Evaluate(ctx);
-      if (!loop_done_)
-      {
-        // Do body
-        if (inner_)
-        {
-          // If the body isn't done then we should just keep doing it
-          // until it is done.
-          auto cont = inner_->Execute(ctx);
-          body_done_ = cont != NULL;
-          // If the body is not done, don't do anything else. 
-          // Just pause and come back to it later.
-          if (!body_done_) 
-          {
-            T(4) << "Beginning to bypass: temporal while-loop." << EndT;
-            return this;
-          }
-        }
-        // Remember that we may have more to do...
-        // Come back to finish later by returning true to mean "not done"      
-        T(4) << "Pausing: temporal while-loop." << EndT;
+        // It didn't finish... try again in the future...
+        T(4) << "Pausing: while-loop." << EndT;    
         return this;
       }
-      else
+    }
+    else
+    {
+      if (!active_[ctx.CurrentSpatialPartition()])
       {
-        T(4) << "Done: temporal while-loop." << EndT;
+        // We are at a beginning of a new body invocation.
+        T(4) << "Starting: while-loop." << EndT;
+      }
+
+      // See if we need more iterations
+      active_[ctx.CurrentSpatialPartition()] = test_expr_->Evaluate(ctx);
+
+      if (active_[ctx.CurrentSpatialPartition()])
+      {
+        // Invoke the body (if any)
+        T(4) << "Executing body: while-loop." << EndT;
+        if (ExecuteCurrentInner(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: while-loop." << EndT;    
+          return this;
+        }
       }
     }
-    // Move on to the next statement (if any)
-    // When they are all done, I reset myself and am ready to go again.
-    auto cont = Statement::Execute(ctx);
-    if (cont == NULL)
+    
+    if (active_[ctx.CurrentSpatialPartition()])
     {
-      T(4) << "Resetting: temporal for-loop." << EndT;
-      started_ = false;
+      // Check for more iterations next time around.
+      T(4) << "Pausing: while-loop." << EndT;    
+      return this;
     }
-    return cont;
+    else
+    {
+      T(4) << "Done: while-loop." << EndT;
+      // Move on to the next statement (if any)
+      // Note: we purposely remove ourselves from the callstack in the sequential case.
+      return Statement::Execute(ctx); 
+    }
   }
 };
 
@@ -1727,17 +1772,7 @@ class TemporalFor : public Statement
   Statement* init_stmt_;
   Expression* test_expr_;
   Statement* incr_stmt_;
-  bool initialized_ = false;
   std::vector<bool> active_;
-  std::vector<Statement*> partition_continuation_;
-  
-  bool AllPartitionsDone()
-  {
-    auto it = std::find_if(partition_continuation_.begin(),
-                           partition_continuation_.end(),
-                           [](Statement* s) { return s != NULL; });
-    return it == partition_continuation_.end();
-  }
 
   TemporalFor(Statement* init_s, Expression* test_e, Statement* incr_s) :
     init_stmt_(init_s),
@@ -1766,52 +1801,55 @@ class TemporalFor : public Statement
     return converted_statement;
   }
   
+  virtual void Init(ExecutionContext& ctx)
+  {
+    active_.resize(ctx.NumSpatialPartitions(), false);
+    Statement::Init(ctx);  
+  }
+  
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    if (!initialized_)
+    if (CurrentIsPaused(ctx))
     {
-      // If this is our *very* first time, initialize.
-      T(4) << "Initializing: temporal for-loop." << EndT;
-      active_.resize(ctx.NumSpatialPartitions(), false);
-      partition_continuation_.resize(ctx.NumSpatialPartitions(), NULL);
-      initialized_ = true;
-    }
-    
-    if (partition_continuation_[ctx.CurrentSpatialPartition()] != NULL)
-    {
-      // This partition's body was paused: just jump to it.
       T(4) << "Bypassing: temporal for-loop." << EndT;
-      partition_continuation_[ctx.CurrentSpatialPartition()] = partition_continuation_[ctx.CurrentSpatialPartition()]->Execute(ctx);
-      // We always need to go again in this state... indicate this by returning this.
-      T(4) << "Pausing: temporal for-loop." << EndT;
-      return this;
-    }
-
-    // We are at a beginning of a new body invocation.
-    if (!active_[ctx.CurrentSpatialPartition()])
-    {
-      T(4) << "Starting: temporal for-loop." << EndT;
-      init_stmt_->Execute(ctx); 
+      if (ResumeCurrent(ctx))
+      {
+        // It didn't finish... try again in the future...
+        T(4) << "Pausing: temporal for-loop." << EndT;    
+        return this;
+      }
     }
     else
     {
-      T(4) << "Incrementing: temporal for-loop." << EndT;
-      incr_stmt_->Execute(ctx);
+      if (!active_[ctx.CurrentSpatialPartition()])
+      {
+        // We are at a beginning of a new body invocation.
+        T(4) << "Starting: temporal for-loop." << EndT;
+        init_stmt_->Execute(ctx); 
+      }
+
+      // See if we need more iterations
+      active_[ctx.CurrentSpatialPartition()] = test_expr_->Evaluate(ctx);
+
+      if (active_[ctx.CurrentSpatialPartition()])
+      {
+        // Invoke the body (if any)
+        T(4) << "Executing body: temporal for-loop." << EndT;
+        if (ExecuteCurrentInner(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: temporal for-loop." << EndT;    
+          return this;
+        }
+      }
     }
-
-    // See if we need more iterations
-    active_[ctx.CurrentSpatialPartition()] = test_expr_->Evaluate(ctx);
-
+    
     if (active_[ctx.CurrentSpatialPartition()])
     {
-      // Invoke the body (if any)
-      T(4) << "Executing body: temporal for-loop." << EndT;
-      if (inner_)
-      {
-        partition_continuation_[ctx.CurrentSpatialPartition()] = inner_->Execute(ctx);
-      }
-      // We always need to go again in this state... indicate this by returning this.
-      T(4) << "Pausing: temporal for-loop." << EndT;      
+      T(4) << "Incrementing: temporal for-loop." << EndT;
+      incr_stmt_->Execute(ctx);
+      // Check for more iterations next time around.
+      T(4) << "Pausing: temporal for-loop." << EndT;    
       return this;
     }
     else
@@ -1837,36 +1875,11 @@ class SpatialFor : public Statement
  public:
   int num_partitions_;
   int flat_expansion_factor_ = 1;
-  std::vector<Statement*> paused_partitions_;
 
   Statement* init_stmt_;
   Expression* test_expr_;
   Statement* incr_stmt_;
   
-  
-  bool AnyPartitionIsPaused(int base, int num)
-  {
-    // NOTE: This version gave us trouble, so writing by hand for now...
-    /*
-    // Note: purposely returns false on size zero vectors.
-    auto begin_it = base >= paused_partitions_.size() ? 
-                    paused_partitions_.end() :
-                    paused_partitions_.begin() + base;
-    auto end_it = base + num >= paused_partitions_.size() ? 
-                     paused_partitions_.end() : 
-                     paused_partitions_.begin() + base + num;
-    auto it = std::find_if(begin_it, 
-                           end_it, 
-                           [](Statement* s) { return s != NULL; });
-    return it != paused_partitions_.end();
-    */
-    if (paused_partitions_.size() == 0) return false;
-    for (int x = base; x < base + num; x++)
-    {
-      if (paused_partitions_[x] != NULL) return true;
-    }
-    return false;
-  }
 
   SpatialFor(const int& num_parts, Statement* init_s, Expression* test_e, Statement* incr_s) :
     num_partitions_(num_parts),
@@ -1893,11 +1906,28 @@ class SpatialFor : public Statement
 
     return converted_statement;
   }
+  
+  virtual void Init(ExecutionContext& ctx)
+  {
+    // Purposely don't call superclass method.
+    ctx.BeginSpatialPartitioning(num_partitions_, flat_expansion_factor_);
+    
+    partition_continuations_.resize(ctx.NumSpatialPartitions(), NULL);
+    if (inner_)
+    {
+      inner_->Init(ctx);
+    }
+    ctx.EndSpatialPartitioning();
+    if (next_)
+    {
+      next_->Init(ctx);
+    }
+  };
+    
 
  
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-    
     // Make a copy of the existing context so that we can use it for statements in
     // the loop itself. This is because the s_for loop statements themselves are
     // non-parallel.
@@ -1913,7 +1943,6 @@ class SpatialFor : public Statement
     {
       // We are a fresh loop.
       T(4) << "Entering: spatial for-loop: " << num_partitions_ << EndT;
-      paused_partitions_.resize(ctx.NumSpatialPartitions(), NULL);
 
       // Do all the statements in sequence, remembering where to continue them if needed.
       for (init_stmt_->Execute(old_ctx); test_expr_->Evaluate(old_ctx); incr_stmt_->Execute(old_ctx))
@@ -1921,7 +1950,8 @@ class SpatialFor : public Statement
         if (inner_)
         {      
           T(4) << "Entering: spatial partition: " << ctx.CurrentSpatialPartition() << EndT;
-          paused_partitions_[ctx.CurrentSpatialPartition()] = inner_->Execute(ctx);
+          ExecuteCurrentInner(ctx);
+          // Never pause here.
           did_something = true;
         }
         ctx.NextSpatialPartition();
@@ -1935,12 +1965,13 @@ class SpatialFor : public Statement
       for (init_stmt_->Execute(old_ctx); test_expr_->Evaluate(old_ctx); incr_stmt_->Execute(old_ctx))
       {
         // Only actually descend into the paused ones.
-        Statement* cont = paused_partitions_[ctx.CurrentSpatialPartition()];
+        Statement* cont = partition_continuations_[ctx.CurrentSpatialPartition()];
         if (cont != NULL)
         {
           did_something = true;
           T(4) << "Resuming: spatial partition: " << ctx.CurrentSpatialPartition() << EndT;
-          paused_partitions_[ctx.CurrentSpatialPartition()] = cont->Execute(ctx);
+          ResumeCurrent(ctx);
+          // Never pause here.
         }
         ctx.NextSpatialPartition();
       }
@@ -2010,37 +2041,49 @@ class If : public Statement
     return converted_statement;
   }
 
-  
   virtual Statement* Execute(ExecutionContext& ctx)
   {
 
-//     Statement* stmt_result;
+    if (CurrentIsPaused(ctx))
+    {
+      T(4) << "Bypassing: dynamic if." << EndT;
+      if (ResumeCurrent(ctx))
+      {
+        // It didn't finish... try again in the future...
+        T(4) << "Pausing: dynamic if." << EndT;    
+        return this;
+      }
+    }
+    else
+    {
+      T(4) << "Entering: dynamic if." << EndT;
+      DataType_t res = test_expr_->Evaluate(ctx);
 
-    T(4) << "Entering: dynamic if." << EndT;
-    int res = test_expr_->Evaluate(ctx);
-    if (res)
-    {
-      T(4) << "    (condition evaluated to true)" << EndT;
-      if (inner_)
+      if (res)
       {
-        inner_->Execute(ctx);
-//         stmt_result = inner_->Execute(ctx);
-//         if( stmt_result != NULL )
-//         {
-//             return stmt_result;
-//         }
+        T(4) << "    (condition evaluated to true)" << EndT;
+        if (ExecuteCurrentInner(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: dynamic if." << EndT;    
+          return this;
+        }
+      }
+      else
+      {
+        T(4) << "    (condition evaluated to false)" << EndT;
+        if (ExecuteCurrentElse(ctx))
+        {
+          // It didn't finish... try again in the future...
+          T(4) << "Pausing: dynamic if." << EndT;    
+          return this;
+        }
       }
     }
-    else 
-    {
-      T(4) << "    (condition evaluated to false)" << EndT;
-      if (else_)
-      {
-        T(4) << "    (switching to else-branch)" << EndT;
-        else_->Execute(ctx);
-      }
-    }
+  
+    // If we got here, nothing paused...
     T(4) << "Done: dynamic if." << EndT;
+
     // Note: we explicitly don't call Statement::Execute(ctx) if we have an else.
     // Instead we jump to whatever is after the else (even if the else itself
     // wasn't executed).
@@ -2084,11 +2127,11 @@ class Else : public Statement
     T(4) << "Entering: else." << EndT;
     if (inner_)
     {
-      inner_->Execute(ctx);
+      return ExecuteCurrentInner(ctx);
     }
     T(4) << "Done: else." << EndT;
     // Note: we explicitly don't call Statement::Execute(ctx) here.
-    // It will be called through ExecuteNext
+    // It will be called through If...
     return NULL; // We are done.
   }
 };
