@@ -766,6 +766,9 @@ class PrimTensor : public StatsCollection
   
   UINT64 FlattenIndices(const std::vector<int>& idxs) const
   {
+    //std::cout << "  Flattening for: " <<  name_ << " " << idxs.size() << " " <<  dim_sizes_.size() << std::endl;
+    
+
     UINT64 res = 0;
     UINT64 amplification_factor = 1;
     assert(idxs.size() == dim_sizes_.size());
@@ -930,9 +933,11 @@ class PrimTensor : public StatsCollection
     return vals_[idx];
   }
 
-  void PrimPushBack(const int& val)
+  void PrimPushBack(const int& val, const int& dim)
   {
     vals_.push_back(val);
+    dim_sizes_[dim]++;
+    std::cout << " pushing back. size: " << dim_sizes_[dim] << std::endl;
   }
 
   void PrimShrinkToFit()
