@@ -49,6 +49,9 @@ extern bool kShouldTraceBuffers;
 extern bool kShouldLogActivity;
 extern int kCurrentTraceLevel;
 extern int kUserTraceLevel;
+extern int kCoalescingWindowSize;
+extern std::string kPhysicalPath;
+extern std::string kPhysicalFile;
 extern std::string kProgramName;
 extern std::string kStatsFileName;
 

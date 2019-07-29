@@ -59,17 +59,58 @@ typedef unsigned long UINT64;
 namespace whoop
 {
 
+class BindingTarget
+{
+ public:
+  inline static const std::string kUnbound = "__UNBOUND__";
+  
+  std::string name_ = kUnbound;
+  int idx_ = 0;
+  
+  BindingTarget() = default;
+  // Note: purposely not explict.
+  BindingTarget(const std::string& nm) : name_(nm) {}
+  BindingTarget(const char* nm) : name_(nm) {}
+  BindingTarget(const std::string& nm, int idx) : name_(nm), idx_(idx) {}
+  BindingTarget(const char* nm, int idx) : name_(nm), idx_(idx) {}
+  
+  std::string GetName() const { return name_; }
+  int GetIndex() const { return idx_; }
+  
+  bool IsUnbound() const { return name_ == kUnbound; }
+  std::string ToString() const { return name_ + "_" + std::to_string(idx_); }
+  
+  // Used by std::map
+  bool operator < (const BindingTarget& other) const
+  {
+    if (name_ < other.name_) return true;
+    if (name_ == other.name_) return idx_ < other.idx_;
+    return false;
+  }
+
+};
+
+
 // top_stats
 // Global variable to serve as top-of-tree for stats dump
 extern StatsCollection top_stats;
 
 extern std::vector<std::vector<std::unique_ptr<activity::ComputeEngineLog>>> compute_logs;
+extern std::vector<std::vector<BindingTarget>> compute_bindings;
+extern std::multimap<BindingTarget, std::string> physical_compute_map;
+extern std::multimap<BindingTarget, std::string> physical_buffer_map;
 
 void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions);
 void LogComputeActivity(std::ostream& ostr);
 void LogComputeTopology(std::ostream& ofile, int num_tensors);
 void InitializeExpansions(const std::vector<int>& flattened_tile_level_spatial_expansions);
-
+void BindCompute(int level, int spatial_idx, const BindingTarget& target);
+void BindComputeLevel(int level, const BindingTarget& target, int expansion_factor = 1);
+BindingTarget GetDefaultBinding(int level, int spatial_idx, int expansion_factor = 1);
+std::string GetComputeBoundName(int tile_level, int dp_idx);
+void AddPhysicalComputeMap(const BindingTarget& target, const std::string& logical);
+void AddPhysicalBufferMap(const BindingTarget& target, const std::string& logical);
+void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTarget, std::string>& phsyical_map);
 
 namespace buff
 {
@@ -112,7 +153,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   activity::PatternGeneratorLog updaters_pgen_log_;
   activity::ShrinkPatternGeneratorLog shrink_pgen_log_;
   std::deque<std::pair<int, BuffetLogInfo>> coalescing_buffer_;
-  int coalescing_window_size_ = 32; // XXX TODO: MAKE DYNAMIC
+  int coalescing_window_size_ = options::kCoalescingWindowSize;
   
   int num_fills_ = 0;
   int num_shrinks_ = 0;
@@ -289,6 +330,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
  public:
   
+  BindingTarget binding_;
   std::shared_ptr<BufferModel> backing_buffer_ = NULL;
   std::vector<std::shared_ptr<BufferModel>> fronting_buffers_;
 
@@ -298,43 +340,50 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   int starting_global_tile_level_;
   int ending_global_tile_level_;
   int local_spatial_idx_;
+  int size_;
   
-  explicit BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "") :
+  BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int sz) :
     StatsCollection(nm, &top_stats),
     TraceableBuffer(nm),
     level_(level),
     starting_global_tile_level_(starting_tile_level),
     ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
-    fronting_buffers_{}
+    size_(sz)
   {
   }
   
   void LogActivity(std::ostream& ostr)
   {
-    command_log_.Dump(ostr, Traceable::GetName() + "_commands", "symphony::modules::LocalBuffet");
+    command_log_.Dump(ostr, Traceable::GetName() + "_commands", "symphony::modules::LogicalBuffet");
     ostr << "," << std::endl;
-    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LocalGatedPatternGenerator");
+    read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LogicalGatedPatternGenerator");
     ostr << "," << std::endl;
-    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LocalGatedPatternGenerator");
+    destination_pgen_log_.Dump(ostr, Traceable::GetName() + "_read_destinations", "symphony::modules::LogicalGatedPatternGenerator");
     ostr << "," << std::endl;
-    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LocalGatedPatternGenerator");
+    update_pgen_log_.Dump(ostr, Traceable::GetName() + "_updates", "symphony::modules::LogicalGatedPatternGenerator");
     ostr << "," << std::endl;
-    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LocalGatedPatternGenerator");
+    updaters_pgen_log_.Dump(ostr, Traceable::GetName() + "_update_sources", "symphony::modules::LogicalGatedPatternGenerator");
     ostr << "," << std::endl;
-    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LocalGatedPatternGenerator");
+    shrink_pgen_log_.Dump(ostr, Traceable::GetName() + "_shrinks", "symphony::modules::LogicalGatedPatternGenerator");
   }
 
   void LogTopologyModule(std::ostream& ostr, int expansion_factor)
   {  
-    ostr << "  - type: module" << std::endl;
-    ostr << "    class: symphony::modules::BuffetComplex" << std::endl;
+    ostr << "  - type: logical_component" << std::endl;
+    ostr << "    class: symphony::modules::LogicalBuffetComplex" << std::endl;
     ostr << "    base_name: " << Traceable::GetName() << std::endl;
     ostr << "    configuration:" << std::endl;
-    ostr << "      knobs_use_prefix: false" << std::endl;
+    ostr << "      knobs_use_prefix: true" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"num_receivers = " << GetNumReceivers(expansion_factor) << "\""  << std::endl;
-    ostr << "        - \"num_updaters = " << GetNumReceivers(expansion_factor) << "\""  << std::endl;
+    ostr << "        - \"size_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"base_ = " <<  0 << "\"" << std::endl;
+    ostr << "        - \"bound_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"use_external_fills_ = " <<  (starting_global_tile_level_ != 0) << "\"" << std::endl;
+    ostr << "        - \"use_absolute_address_mode_ = false\"" << std::endl;
+    ostr << "        - \"automatically_handle_fills_ = true\"" << std::endl;
+    ostr << "        - \"automatically_handle_updates_ = true\"" << std::endl;
+    ostr << "        - \"shrink_requires_data_up_to_date_ = false\"" << std::endl;
     ostr << std::endl;
   }
 
@@ -349,6 +398,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       ostr << "        dst:" << std::endl;
       ostr << "          - name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
       ostr << "            port-name: fill_data_in_0" << std::endl;
+      ostr << "        configuration:" << std::endl;
+      ostr << "          credited: true" << std::endl;
       ostr << "      - src:" << std::endl;
       ostr << "        - name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
       ostr << "          port-name: drain_data_out_0" << std::endl;
@@ -371,10 +422,10 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         ostr << "        - name: " << Traceable::GetName() << std::endl;
         ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + local_dp_index << std::endl;
         ostr << "        dst:" << std::endl;
-        ostr << "        - name: compute_engine_" << tile_level << "_" << dp_idx << std::endl;
+        ostr << "        - name: " << GetComputeBoundName(tile_level, dp_idx) << std::endl;
         ostr << "          port-name: input_" << id << std::endl; // Note: This index could be smarter.
         ostr << "      - src:" << std::endl;
-        ostr << "        - name: compute_engine_" << tile_level << "_" << dp_idx << std::endl;
+        ostr << "        - name: " << GetComputeBoundName(tile_level, dp_idx) << std::endl;
         ostr << "          port-name: output_" << id << std::endl;
         ostr << "        dst:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
@@ -384,8 +435,92 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     }
   }
 
+  void LogTopologyRoutes(std::ostream& ostr, int id, int spatial_idx, int expansion_factor)
+  {
+    for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
+    {
+      // The buffer feeds another (usually smaller) buffer.
+      ostr << " - Route:" << std::endl;
+      ostr << "   - Circuit_id: 0" << std::endl;
+      ostr << "     type: unicast" << std::endl;
+      ostr << "     logical_src:" << std::endl;
+      ostr << "       logical_name: " << Traceable::GetName() << std::endl;
+      ostr << "       logical_connection: read_data_out_" << dst_idx << std::endl;
+      ostr << "     logical_dst:" << std::endl;
+      ostr << "       logical_name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+      ostr << "       logical_connection: fill_data_in_0" << std::endl;
+      ostr << "     physical_data_path:" << std::endl;
+      ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+      ostr << "         physical_connection_name: read_out_1" << std::endl;
+      ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
+      ostr << "         physical_connection_name: fill_in_0" << std::endl;
+      ostr << std::endl;
+      ostr << " - Route:" << std::endl;
+      ostr << "   - Circuit_id: 1" << std::endl;
+      ostr << "     type: unicast" << std::endl;
+      ostr << "     logical_src:" << std::endl;
+      ostr << "       logical_name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
+      ostr << "       logical_connection: drain_data_out_0" << std::endl;
+      ostr << "     logical_dst:" << std::endl;
+      ostr << "       logical_name: " << Traceable::GetName() << std::endl;
+      ostr << "       logical_connection: update_data_in_" << dst_idx << std::endl;
+      ostr << "     physical_data_path:" << std::endl;
+      ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
+      ostr << "         physical_connection_name: drain_out_0" << std::endl;
+      ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+      ostr << "         physical_connection_name: update_in_1" << std::endl;
+      ostr << std::endl;
+    }
+    
+    // The buffer feeds datapaths between it and the next tile level 
+    // where this tensor participates.
+    // If there is no such tile level then it covers all the remaining levels.
+    int end_level = ending_global_tile_level_ == starting_global_tile_level_ ? compute_logs.size() : ending_global_tile_level_;
+    int local_dp_index = 0;
+    for (int tile_level = starting_global_tile_level_; tile_level < end_level; tile_level++)
+    {
+      int num_dpaths = compute_logs[tile_level].size() / expansion_factor;
+      for (int x = 0; x < num_dpaths; x++)
+      {
+        int dp_idx = spatial_idx * num_dpaths + x;
+        ostr << " - Route:" << std::endl;
+        ostr << "   - Circuit_id: 2" << std::endl;
+        ostr << "     type: unicast" << std::endl;
+        ostr << "     logical_src:" << std::endl;
+        ostr << "       logical_name: " << Traceable::GetName() << std::endl;
+        ostr << "       logical_connection: read_data_out_" << fronting_buffers_.size() + local_dp_index << std::endl;
+        ostr << "     logical_dst:" << std::endl;
+        ostr << "       logical_name: " << GetComputeBoundName(tile_level, dp_idx) << std::endl;
+        ostr << "       logical_connection: input_" << id << std::endl;
+        ostr << "     physical_data_path:" << std::endl;
+        ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: read_out_0" <<   std::endl;
+        ostr << "       - physical_module_name: system:" << compute_bindings[tile_level][dp_idx].ToString() << "-CECC" << std::endl;
+        ostr << "         physical_connection_name: data_in_0" << std::endl;
+        ostr << std::endl;
+        ostr << " - Route:" << std::endl;
+        ostr << "   - Circuit_id: 3" << std::endl;
+        ostr << "     type: unicast" << std::endl;
+        ostr << "     logical_src:" << std::endl;
+        ostr << "       logical_name: " << GetComputeBoundName(tile_level, dp_idx) << std::endl;
+        ostr << "       logical_connection: output_" << id << std::endl;
+        ostr << "     logical_dst:" << std::endl;
+        ostr << "       logical_name: " << Traceable::GetName() << std::endl;
+        ostr << "       logical_connection: update_data_in_" << fronting_buffers_.size() + local_dp_index << std::endl;
+        ostr << "     physical_data_path:" << std::endl;
+        ostr << "       - physical_module_name: system:" << compute_bindings[tile_level][dp_idx].ToString() << "-CECC" << std::endl;
+        ostr << "         physical_connection_name: data_out_0" << std::endl;
+        ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: update_in_0" << std::endl;
+        ostr << std::endl;
+        local_dp_index++;
+      }
+    }
+  }
+
   void Resize(int size)
   {
+    size_ = size;
     command_log_.Resize(size);
   }
 
@@ -417,6 +552,15 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   virtual void FlushBuffet() = 0;
   virtual void FixupLevelNumbering(int final_num_levels) = 0;
   virtual void SetBufferWidth(int width) = 0;
+  
+  virtual void Bind(const BindingTarget& target) 
+  {
+    ASSERT(binding_.IsUnbound()) << "Multiple bindings received. Old binding: " << binding_.ToString() << ", new: " << target.ToString() << EndT;
+    binding_ = target;
+    Traceable::PrependToName(binding_.ToString() + "_");
+    StatsCollection::PrependToName(binding_.ToString() + "_");
+    AddPhysicalBufferMap(binding_, Traceable::GetName());
+  }
 };
 
 class BackingBufferModel : public BufferModel
@@ -449,7 +593,7 @@ class BackingBufferModel : public BufferModel
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
   BackingBufferModel(const std::string& nm, int size) : 
-    BufferModel(0, 0, 0, nm)
+    BufferModel(0, 0, 0, nm, size)
   {
     AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (backing memory)" + nm);
     command_log_.Init(size, 0, false);
@@ -521,7 +665,6 @@ class AssociativeBufferModel : public BufferModel
   std::unordered_map<int, EntryInfo> presence_info_;
   std::list<int> lru_cache_; // list occupancy should never exceed size_. Back = least recently used.
   int occupancy_ = 0;
-  int size_;
   int granularity_;
   int buffet_size_;
   int extra_buffering_ = 0;
@@ -536,10 +679,8 @@ class AssociativeBufferModel : public BufferModel
     }
   }
     
-  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm = "", int shrink_granularity = 0, int granularity = 1) : 
-    lru_cache_(), 
-    size_(size/granularity), 
-    BufferModel(level, starting_tile_level, local_spatial_idx, nm), 
+  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int granularity) :
+    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size/granularity), 
     granularity_(granularity), 
     buffet_size_(size)
   {
@@ -725,6 +866,7 @@ class AssociativeBufferModel : public BufferModel
   
   virtual void FixupLevelNumbering(int final_num_levels)
   {
+    if (!binding_.IsUnbound()) return;
     level_ = final_num_levels - level_;
     std::string prefix = "l" + std::to_string(level_) + "_";
     Traceable::PrependToName(prefix);
@@ -1149,6 +1291,44 @@ class PrimTensor : public StatsCollection
     // Every tensor has a backing level.
     (*buffer_levels_[0])[0]->at(0)->LogTopologyConnections(ostr, id_, 0, 1);
   }
+
+  void LogTopologyRoutes(std::ostream& ostr)
+  {
+    for (auto& port : buffer_levels_)
+    {
+      // Skip the backing level as it is repeated across ports.
+      for (auto level_it = std::next(port->begin()); level_it != port->end(); level_it++)
+      {
+        int local_spatial_idx = 0;
+        for (auto& buff : *(*level_it))
+        {
+          buff->LogTopologyRoutes(ostr, id_, local_spatial_idx, (*level_it)->size());
+          local_spatial_idx++;
+        }
+      }
+    }
+    // Every tensor has a backing level.
+    (*buffer_levels_[0])[0]->at(0)->LogTopologyRoutes(ostr, id_, 0, 1);
+  }
+
+  void BindToDefaults()
+  {
+    for (auto port_it : buffer_levels_)
+    {
+      for (int level = 0; level < port_it->size(); level++)
+      {
+        for (auto spatial_idx = 0; spatial_idx < (*port_it)[level]->size(); spatial_idx++)
+        {
+          auto cur_buff = (*(*port_it)[level])[spatial_idx];
+          if (cur_buff->binding_.IsUnbound())
+          {
+            cur_buff->Bind(GetDefaultBinding(level, spatial_idx, (*port_it)[level]->size()));
+          }
+        }
+      }
+    }
+  }
+
 };
 
 class Statement;

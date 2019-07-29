@@ -46,6 +46,9 @@ bool kShouldLogActivity(false);
 bool kShouldFlushTiles(false);
 int kCurrentTraceLevel(0);
 int kUserTraceLevel(0);
+int kCoalescingWindowSize(32);
+std::string kPhysicalPath(".");
+std::string kPhysicalFile("mini-vivaldi.physical.yaml");
 std::string kProgramName;
 std::string kStatsFileName; 
     
@@ -72,7 +75,16 @@ void SetOverrides()
       "Log activity for cycle-accurate simulation.")
     ("trace_level,t",
       po::value<int>(&kCurrentTraceLevel),
-      "Level of trace detail (0=none, 1=some, 2=detailed, 3=system, 4=runtime).");
+      "Level of trace detail (0=none, 1=some, 2=detailed, 3=system, 4=runtime)."),
+    ("window_size,w",
+      po::value<int>(&kCoalescingWindowSize),
+      "Coalescing window size (default=32)."),
+    ("physical_path,pp",
+      po::value<std::string>(&kPhysicalPath),
+      "Path to physical topology file."),
+    ("physical_file,pf",
+      po::value<std::string>(&kPhysicalFile),
+      "Physical topology file name.");
   try
   {
     po::variables_map vm;

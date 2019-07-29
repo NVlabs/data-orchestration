@@ -28,9 +28,10 @@
 # Stop on errors
 set -e
 # build the executable
-scons -u -Q
+scons -u -Q debug=1
 
 executable=./conv1d-tiled-output.bin
+#executable="gdb --args ./conv1d-tiled-output.bin"
 
 if [ $# -eq 2 ]; then
     infile=$1
