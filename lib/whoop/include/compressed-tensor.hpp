@@ -73,10 +73,30 @@ class CompressedTensor
     coordinates_(dim_sizes_.size(), NULL),
     segments_(dim_sizes_.size(), NULL)
   {
-    if (my_type_ != Type::Out)
+    //if (my_type_ != Type::Out) Neal: we need to init output as well (have override for init)
       Init(nnz);        
   }
 
+  std::vector<int> DimensionSizes()
+  {
+    return dim_sizes_;
+  }
+
+
+  UINT64 Size(int dim)
+  {
+      return dim_sizes_[dim];
+  }
+
+  UINT64 size()
+  {
+      return values_->size();
+  }
+  
+  UINT64 PrimSize()
+  {
+    return values_->size();
+  }
 
   long GetStorage( void )
   {
@@ -102,6 +122,16 @@ class CompressedTensor
     Init(nnz);
   }
 
+  void Resize(const std::vector<int>& dim_sizes, int nnz = 0)
+  {
+    // Reverse the dimension sizes.
+    dim_sizes_.assign(dim_sizes.rbegin(), dim_sizes.rend());
+    num_dims_ = dim_sizes_.size();
+    last_inserted_coordinate_.resize(num_dims_, -1);
+    coordinates_.resize(num_dims_, NULL);
+    segments_.resize(num_dims_, NULL);
+    Init(nnz);
+  }
 
   void TrimFat( void )
   {
@@ -124,9 +154,44 @@ class CompressedTensor
 
   void PrintCompressedTensor( int print_coords=false )
   {
+
+      whoop::T(0) << "  Printing Compressed tensor - nnz: " << coordinates_[0]->Size() << whoop::EndT;
+
       T(4) << EndT;
-      T(4) <<"Compressed Sparse Fiber (CompressedTensor) Representation Of Graph:"<< EndT;;
+      T(4) <<"Compressed Sparse Fiber (CompressedTensor) Representation Of Graph:"<< EndT;
       T(4) << EndT;
+
+      std::cout <<" Print Compressed Tracer " << std::endl;
+      for(int dim=0; dim < num_dims_; dim++)
+      {
+        std::cout <<"dim: " << dim << std::endl;
+        std::cout <<"segment (size " << segments_[dim]->size() << "): ";
+        for (int x = 0; x < segments_[dim]->PrimSize(); x++)
+        {
+          std::cout << segments_[dim]->PrimAt(x) << " ";
+        }
+        std::cout << std::endl;
+
+        std::cout <<"coord (size " << coordinates_[dim]->size() << "): ";
+        for (int x = 0; x < coordinates_[dim]->PrimSize(); x++)
+        {
+          std::cout << coordinates_[dim]->PrimAt(x) << " ";
+        }
+        std::cout << std::endl;
+
+        if (dim == (num_dims_-1)) {
+          std::cout <<"val (size " << values_->size() << "): ";
+          for (int x = 0; x < values_->PrimSize(); x++)
+          {
+           std::cout << values_->PrimAt(x) << " ";
+          }
+          std::cout << std::endl;
+        }
+        std::cout << std::endl;
+      }
+
+      
+
       /*
       for(int dim=num_dims_ - 1; dim>=0; dim--) 
       {
@@ -169,15 +234,25 @@ class CompressedTensor
       // it will be resized based on insertions
 
       for (int x = 0; x < num_dims_; x++)
-      {
-        segments_[x]->Resize(2);
-        segments_[x]->At(0) = 0;
-        segments_[x]->At(1) = 0;
+      {  
+        //initialize root segment to be empty (with two values)
+        if (x == 0) {
+          segments_[x]->Resize(2);
+          segments_[x]->At(0) = 0;
+          segments_[x]->At(1) = 0;      
+        }
+        else {
+          segments_[x]->Resize(1);
+          segments_[x]->At(0) = 0;
+        }
+
+        coordinates_[x]->Resize(0);
       }
   }
 
   void Insert( const std::vector<int>& coord, int val_in=1 )
   {
+      //whoop::T(0) << "  DS: Insert begin at : "  << whoop::EndT;
 
       ASSERT(coord.size() == num_dims_) << "Wrong number of coordinates in point. Expected: " << num_dims_ << ", Got: " << coord.size() << EndT;
       
@@ -193,30 +268,58 @@ class CompressedTensor
       }
       ASSERT(strictly_greater || values_->PrimSize() == 0) << "Inserting points in unsorted order!" << EndT;
 
-      for(int dim=coord.size()-1; dim>=0; dim--)
+      bool attempt_compress = true;
+      for(int dim=0; dim < coord.size(); dim++)
       {
+        int index_dim = (coord.size()-1)-dim;
+        whoop::T(0) << "      Coord insert at: " << coord[index_dim] << whoop::EndT;
 
-        coordinates_[dim]->PrimPushBack(coord[dim]);
-
-        if( dim == 0 )
+        //don't duplicate like coordinates of the CSF tree (compress)
+        //  traverse the tree until we don't find a suitable coord node
+        //    (we work from root down toward leaves with each iteration)
+        //  compare the coord to insert with the last item in coord array
+        //  we stop compressing when we no longer have a match
+        //  this works as insertions must be done in strict ascending order
+        if (attempt_compress == false || (coordinates_[dim]->size() == 0) || (coord[index_dim] != coordinates_[dim]->PrimAt(coordinates_[dim]->size()-1)))
         {
-            values_->PrimPushBack(val_in);
+          whoop::T(0) << "      Coord added " << whoop::EndT;
+          //add new coordinate
+          coordinates_[dim]->PushBack(coord[index_dim]);
+  
+          //we found a new value at our fiber, increase count local to our fiber
+          whoop::T(0) << "      Segment adjust at : " << (segments_[dim]->PrimSize() - 1) << " newval: " << segments_[dim]->At(segments_[dim]->PrimSize() - 1) << whoop::EndT;
+          segments_[dim]->At(segments_[dim]->PrimSize() - 1) += 1; // = coordinates_[dim]->PrimSize();
+
+          //we found a new value - new fiber at next rank.
+          //add new segment value to next dim, equal to next dim's current tail 
+          if (dim != (num_dims_-1)) 
+          {
+            segments_[dim+1]->PushBack(segments_[dim+1]->At(segments_[dim+1]->PrimSize() - 1));
+            whoop::T(0) << "      Segment added in next dim at : " << (segments_[dim+1]->PrimSize() - 1) << " newval: " << segments_[dim+1]->At(segments_[dim+1]->PrimSize() -1) << whoop::EndT;
+          }
+
+          attempt_compress = false; //we didn't find a match and shouldn't continue to compress subsequent dims
+        }
+        else {
+          whoop::T(0) << "      Coord existing " << whoop::EndT;
         }
 
-        // if inserting at anything but the leaf dimension, we
-        // need to start a new segment, hence increment the
-        // write pointers for the level below
 
-        if( dim != 0 ) 
+        
+
+        //whoop::T(0) << "  Printing Compressed tensor - nnz: " << coordinates_[dim]->size() << whoop::EndT;
+
+        if( dim == (num_dims_-1) )
         {
-          // set segment start pointer to be whatever it was before
-          segments_[dim-1]->PrimPushBack(segments_[dim-1]->At( segments_[dim-1]->PrimSize() - 1));
+            whoop::T(0) << "      Value added " << whoop::EndT;
+            values_->PushBack(val_in);
         }
 
-        segments_[dim]->At( segments_[dim]->PrimSize() - 1) = coordinates_[dim]->PrimSize();
       }
 
       last_inserted_coordinate_ = coord;
+      //whoop::T(0) << "    DS: Insert end at : " << whoop::EndT;
+
   }
 
   bool Locate( int d1, int s1, int &os, int &oe )
@@ -258,22 +361,68 @@ class CompressedTensor
       return false;
   }
 
-  int GetCoordinate( int dim_arg, int pos )
-  {
-      return coordinates_[dim_arg]->At( {pos} );
-  }
 
   int GetSegment( int dim_arg, int pos )
   {
       return segments_[dim_arg]->At( {pos} );
   }
+
+  int GetSegmentBegin( int dim_arg, int pos )
+  {
+      return segments_[dim_arg]->At( {pos} );
+  }
+
+  int GetSegmentEnd( int dim_arg, int pos )
+  {
+      return segments_[dim_arg]->At( {pos + 1} );
+  }
+
+  TensorDisambiguator GetSegmentBegin( int dim_arg, Var& pos )
+  {
+      std::cout << "  SegBeg: " << name_ << " " << dim_arg << std::endl;
+      return (*(segments_[dim_arg]))[pos];
+  }
+
+  TensorDisambiguator GetSegmentEnd( int dim_arg, Var& pos )
+  {
+      std::cout << "  SegEnd: " << name_ << " " << dim_arg << std::endl;
+      return (*(segments_[dim_arg]))[pos+1];
+  }
+
   
-  
+
+  int GetCoordinate( int dim_arg, int pos )
+  {
+      return coordinates_[dim_arg]->At( {pos} );
+  }
+
+  inline TensorDisambiguator GetCoordinate(int dim_arg, Var& pos )
+  {
+      std::cout << "  Coord: " << name_ << " " << dim_arg << std::endl;
+      //return (*(coordinates_[dim_arg]))[pos];
+      return (*this->coordinates_[dim_arg])[pos];
+  }
+
+
+
   int GetValue( int pos )
   {
     return values_->At({pos});
   }
-  
+
+  TensorDisambiguator GetValue( Var& pos )
+  {
+    std::cout << "  Value: " <<  name_ << std::endl;
+    return (*values_)[pos];
+  }
+
+  TensorDisambiguator SetValue( Var& pos )
+  {
+    std::cout << "  Value: " <<  name_ << std::endl;
+    return (*values_)[pos];
+  }
+
+
   FullyConcordantScanner GetFullyConcordantScanner();
   
   friend class boost::serialization::access;
@@ -343,11 +492,15 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
   std::string filename_;
   std::string ref_filename_;
 
-   CompressedTensorOut(const std::string& name) :
-     CompressedTensor(name, {}, {}, 0, Type::Out) {}
+  CompressedTensorOut(const std::string& name) :
+     CompressedTensor(name, {}, {}, 0, Type::Out) 
+  {
+    Init(); //Neal calls local Init only
+  }
 
   void Init()
   {
+    whoop::T(0) << "  Init Compressed Tensor Out: " <<  whoop::EndT;
     filename_ = name_ + ".out.txt";
     ref_filename_ = name_ + ".ref.txt";
 
@@ -356,9 +509,29 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
     
     need_output.push_back(this);
   }
+
+  
+  void DuplicateFromIn(CompressedTensorIn ref)
+  {
+    std::ifstream ifs;
+    ifs.open(ref.filename_);
+    if (ifs.fail())
+    {
+      std::cerr << "Error: CompressedTensorIn " << name_ << " when attempting to read data from file: " << filename_ << std::endl;
+      std::cerr << "Error: " << strerror(errno) << std::endl;
+      std::cerr << "Note: file name can be set with option --tensor_" << name_ << "_file=<filename>" << std::endl;
+      
+      std::exit(1);
+    }
+    boost::archive::text_iarchive ia(ifs);
+    ia >> (*this);
+    TrimFat();
+  }
+
   
   void DumpOutput()
   {
+    whoop::T(0) << "  Dumping to File: " <<  whoop::EndT;
     std::ofstream ofs(filename_);
     boost::archive::text_oarchive oa(ofs);
     oa << (*this);
