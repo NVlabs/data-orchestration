@@ -1057,6 +1057,11 @@ class Vec : public Tensor
   {
     Tensor::Resize({new_size});
   }
+
+  void PushBack(const int& val)
+  {
+    PrimPushBack(val, 0);
+  }
   
   DataType_t& At(const int& idx)
   {

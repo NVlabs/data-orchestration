@@ -51,7 +51,7 @@ int main(int argc, char** argv)
   whoop::Init(argc, argv);
   
   auto dim_sizes = input.DimensionSizes();
-  output.Reshape(dim_sizes.size());
+  output.Resize(dim_sizes);
   
   whoop::T(0) << "Tensor has " << dim_sizes.size() << " dimensions (" << input.PrimSize() << " total original elements)." << whoop::EndT;
   for (int x = 0; x < dim_sizes.size(); x++)
@@ -66,10 +66,13 @@ int main(int argc, char** argv)
   {
     if (input.PrimAt(x) != 0)
     {
+       
       // Found a non-zero value.
       // Get the indices in the N-D tensor.
       auto point = input.PrimUnflattenIndex(x);
+      whoop::T(0) << "  Generator: Found nonzero at : " << x << whoop::EndT;
       output.Insert(point, input.PrimAt(x));
+
     }
   }
   
@@ -78,6 +81,7 @@ int main(int argc, char** argv)
   
   // Final print-outs.
   output.PrintCompressedTensor(true);
+  //output.DumpOutput();
   
   whoop::Done();
 }
