@@ -79,14 +79,17 @@ int main(int argc, char** argv)
 
   t_for(w1, 0, W1);
   {
-    s_for(w0, 0, W0);
+    t_for(r, 0, R);
     {
-      inputs.AddTileLevel(1);
+      inputs.BypassTileLevel();
       weights.AddTileLevel(R);
       outputs.AddTileLevel(R, 1);
-
-      t_for(r, 0, R);
+      s_for(w0, 0, W0);
       {
+        inputs.AddTileLevel(1);
+        weights.BypassTileLevel();
+        outputs.BypassTileLevel();
+
         w_if(W0*w1 + w0 - r >= 0);
         {
           w_if(kOutputWidth - 1 >= W0*w1 + w0 - r);

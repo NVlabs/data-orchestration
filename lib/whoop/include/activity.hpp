@@ -199,16 +199,6 @@ class BuffetCommandLog : public Log
     boost::property_tree::ptree init_action;
     //init_action.put("UnitInstance", name_);
     //init_action.put("UnitClass", "SymphonyBuffet");
-    init_action.put("Action", "BuffetCreateStateAction");
-    init_action.put("Params.size_", size_);
-    init_action.put("Params.base_", 0);
-    init_action.put("Params.bound_", size_);
-    init_action.put("Params.id_", 0);
-    init_action.put("Params.use_external_fills_", is_filled_);
-    init_action.put("Params.use_absolute_address_mode_", false);
-    init_action.put("Params.automatically_handle_fills_", true);
-    init_action.put("Params.automatically_handle_updates_", true);
-    AddInitialActivity(init_action);
     Log::Dump(ostr, nm, mytype);
   }
  
@@ -329,9 +319,9 @@ class ComputeEngineLog : public Log
   
   void Dump(std::ostream& ostr, const std::string& nm, const std::string& mytype)
   {
-    sgen_log_.Dump(ostr, nm + "_input_sources", "symphony::modules::LocalGatedPatternGenerator");
+    sgen_log_.Dump(ostr, nm + "_input_sources", "symphony::modules::LogicalGatedPatternGenerator");
     ostr << "," << std::endl;
-    dgen_log_.Dump(ostr, nm + "_output_destinations", "symphony::modules::LocalGatedPatternGenerator");
+    dgen_log_.Dump(ostr, nm + "_output_destinations", "symphony::modules::LogicalGatedPatternGenerator");
   }
 };
 

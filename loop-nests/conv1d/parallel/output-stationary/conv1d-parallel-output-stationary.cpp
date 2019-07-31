@@ -77,8 +77,11 @@ int main(int argc, char** argv)
   {
     inputs.AddTileLevel(S, 1);
     weights.AddTileLevel(S);
+    outputs.BypassTileLevel();
     s_for(q0, 0, Q0);
     {
+      inputs.BypassTileLevel();
+      weights.BypassTileLevel();
       outputs.AddTileLevel(1);
       t_for(s, 0, S);
       {
