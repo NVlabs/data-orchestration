@@ -322,6 +322,71 @@ class CompressedTensor
 
   }
 
+/*
+  bool Locate(const std::vector<Var>& query_coord, const std::vector<Var>& start_position, std::vector<Var>& query_position){
+
+  }
+
+  bool Locate(const std::vector<Var>& query_coord, std::vector<Var>& query_position)
+  {
+      //whoop::T(0) << "  DS: Insert begin at : "  << whoop::EndT;
+
+      ASSERT(coord.size() == num_dims_) << "Wrong number of coordinates in point. Expected: " << num_dims_ << ", Got: " << coord.size() << EndT;
+      
+      for(int dim=0; dim < coord.size(); dim++)
+      {
+        int index_dim = (coord.size()-1)-dim;
+        whoop::T(0) << "      Coord insert at: " << coord[index_dim] << whoop::EndT;
+
+        //don't duplicate like coordinates of the CSF tree (compress)
+        //  traverse the tree until we don't find a suitable coord node
+        //    (we work from root down toward leaves with each iteration)
+        //  compare the coord to insert with the last item in coord array
+        //  we stop compressing when we no longer have a match
+        //  this works as insertions must be done in strict ascending order
+        if (attempt_compress == false || (coordinates_[dim]->size() == 0) || (coord[index_dim] != coordinates_[dim]->PrimAt(coordinates_[dim]->size()-1)))
+        {
+          whoop::T(0) << "      Coord added " << whoop::EndT;
+          //add new coordinate
+          coordinates_[dim]->PushBack(coord[index_dim]);
+  
+          //we found a new value at our fiber, increase count local to our fiber
+          whoop::T(0) << "      Segment adjust at : " << (segments_[dim]->PrimSize() - 1) << " newval: " << segments_[dim]->At(segments_[dim]->PrimSize() - 1) << whoop::EndT;
+          segments_[dim]->At(segments_[dim]->PrimSize() - 1) += 1; // = coordinates_[dim]->PrimSize();
+
+          //we found a new value - new fiber at next rank.
+          //add new segment value to next dim, equal to next dim's current tail 
+          if (dim != (num_dims_-1)) 
+          {
+            segments_[dim+1]->PushBack(segments_[dim+1]->At(segments_[dim+1]->PrimSize() - 1));
+            whoop::T(0) << "      Segment added in next dim at : " << (segments_[dim+1]->PrimSize() - 1) << " newval: " << segments_[dim+1]->At(segments_[dim+1]->PrimSize() -1) << whoop::EndT;
+          }
+
+          attempt_compress = false; //we didn't find a match and shouldn't continue to compress subsequent dims
+        }
+        else {
+          whoop::T(0) << "      Coord existing " << whoop::EndT;
+        }
+
+
+        
+
+        //whoop::T(0) << "  Printing Compressed tensor - nnz: " << coordinates_[dim]->size() << whoop::EndT;
+
+        if( dim == (num_dims_-1) )
+        {
+            whoop::T(0) << "      Value added " << whoop::EndT;
+            values_->PushBack(val_in);
+        }
+
+      }
+
+      last_inserted_coordinate_ = coord;
+      //whoop::T(0) << "    DS: Insert end at : " << whoop::EndT;
+
+  }
+
+*/
   bool Locate( int d1, int s1, int &os, int &oe )
   {
       int levelsSearched  = 0;
@@ -361,6 +426,11 @@ class CompressedTensor
       return false;
   }
 
+
+  int AddSegment( int dim_arg, int pos )
+  {
+      return segments_[dim_arg]->At( {pos} );
+  }
 
   int GetSegment( int dim_arg, int pos )
   {
@@ -421,6 +491,23 @@ class CompressedTensor
     std::cout << "  Value: " <<  name_ << std::endl;
     return (*values_)[pos];
   }
+
+
+  void AddSegmentTileLevel(int dim_arg, int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
+  {
+     (*segments_[dim_arg]).AddTileLevel(size, shrink_granularity, granularity, port);
+  }
+
+  void AddCoordinateTileLevel(int dim_arg, int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
+  {
+     (*coordinates_[dim_arg]).AddTileLevel(size, shrink_granularity, granularity, port);
+  }
+
+  void AddValueTileLevel(int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
+  {
+     (*values_).AddTileLevel(size, shrink_granularity, granularity, port);
+  }
+
 
 
   FullyConcordantScanner GetFullyConcordantScanner();
