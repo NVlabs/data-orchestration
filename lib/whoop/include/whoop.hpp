@@ -833,6 +833,12 @@ class Tensor : public ast::PrimTensor
     }
 
   }
+
+  void BypassTileLevel(int granularity = 1, int port = 0)
+  {
+    // TODO: This should be a No-Op
+    AddTileLevel(granularity, granularity, granularity, port);
+  }
   
   int AddPort()
   {
@@ -857,15 +863,19 @@ class Tensor : public ast::PrimTensor
   
   void BindTileLevel(int tile_level, const BindingTarget& target, int expansion_factor = 1, int port = 0)
   {
-    int level_size = (*buffer_levels_[port])[tile_level]->size();
-    int tiles_per_target = expansion_factor / level_size;
-    int cur_target_idx = target.GetIndex();
-    for (int x = 0; x < level_size; x++)
+    int logical_level_size = (*buffer_levels_[port])[tile_level]->size();
+    int tiles_per_target = std::max(expansion_factor / logical_level_size, 1);
+    int cur_target_idx = std::min(target.GetIndex(), logical_level_size - 1);
+    for (int x = 0; x < logical_level_size; x++)
     {
       BindTile(tile_level, x, {target.GetName(), cur_target_idx}, port);
       if ((x+1) % tiles_per_target == 0)
       {
-        cur_target_idx++;
+        // Handle the remainder if it doesn't divide evenly. Just put them all on the final.
+        if (cur_target_idx < expansion_factor - 1)
+        {
+          cur_target_idx++;
+        }
       }
     }
   };
@@ -1047,6 +1057,11 @@ class TensorPort
   void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1)
   {
     target_->AddTileLevel(size, shrink_granularity, granularity, port_);
+  }
+
+  void BypassTileLevel(int granularity = 1)
+  {
+    target_->BypassTileLevel(granularity, port_);
   }
   
   void BindTile(int tile_level, int spatial_idx, const BindingTarget& target)

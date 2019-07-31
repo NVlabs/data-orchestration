@@ -80,9 +80,12 @@ int main(int argc, char** argv)
     {
       inputs.AddTileLevel(W);
       outputs.AddTileLevel(Q);
+      weights.BypassTileLevel();
       s_for(s0, 0, S0);
       {
+        inputs.BypassTileLevel();
         weights.AddTileLevel(1);
+        outputs.BypassTileLevel();
         s = s1 * S0 + s0;
         outputs[q] += inputs[q + s] * weights[s];
       }

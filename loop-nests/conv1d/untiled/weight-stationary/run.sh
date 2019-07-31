@@ -31,6 +31,7 @@ set -e
 scons -u -Q
 
 executable=./conv1d-untiled-weight-stationary.bin
+#executable="gdb --args ./conv1d-untiled-weight-stationary.bin"
 
 if [ $# -eq 2 ]; then
     infile=$1

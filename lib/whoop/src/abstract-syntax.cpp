@@ -42,15 +42,31 @@ std::vector<BindingTarget> default_bindings =
   {
     {"DOTMDRAM", 1},
     {"DOTML2", 1},
-    {"DOTC", 4},
+    {"DOTC", 2},
     {"CT", 8},
-    {"FM", 8}
+    {"FMCT", 8}
   };
 
 std::vector<std::vector<std::unique_ptr<activity::ComputeEngineLog>>> compute_logs{};
 std::vector<std::vector<BindingTarget>> compute_bindings{};
 std::multimap<BindingTarget, std::string> physical_compute_map{};
 std::multimap<BindingTarget, std::string> physical_buffer_map{};
+
+int BindingTarget::GetLevel()
+{
+  for (int level = 0; level != default_bindings.size(); level++)
+  {
+    if (default_bindings[level].GetName() == name_) return level;
+  }
+  return -1;
+}
+
+int BindingTarget::GetExpansionFactor()
+{
+  int level = GetLevel();
+  if (level == default_bindings.size() - 1) return 0;
+  return std::max(default_bindings[level+1].GetIndex() / default_bindings[level].GetIndex(), 1);
+}
 
 void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions)
 {
@@ -141,15 +157,19 @@ void BindCompute(int level, int spatial_idx, const BindingTarget& target)
 
 void BindComputeLevel(int level, const BindingTarget& target, int expansion_factor)
 {
-  int level_size = compute_bindings.at(level).size();
-  int tiles_per_target = expansion_factor / level_size;
-  int cur_target_idx = target.GetIndex();
-  for (int x = 0; x < level_size; x++)
+  int logical_level_size = compute_bindings.at(level).size();
+  int tiles_per_target = std::max(expansion_factor / logical_level_size, 1);
+  int cur_target_idx = std::min(target.GetIndex(), logical_level_size - 1);
+  for (int x = 0; x < logical_level_size; x++)
   {
     BindCompute(level, x, {target.GetName(), cur_target_idx});
     if ((x+1) % tiles_per_target == 0)
     {
-      cur_target_idx++;
+      // Handle the remainder if it doesn't divide evenly. Just put them all on the final.
+      if (cur_target_idx < expansion_factor - 1)
+      {
+        cur_target_idx++;
+      }
     }
   }
 }
@@ -238,7 +258,11 @@ namespace buff
 {
 int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int num_spatial_partitions )
 {
-  return ( curr_spatial_idx / (num_spatial_partitions/buffs_at_level) );
+  if (num_spatial_partitions < buffs_at_level) 
+  {
+    return curr_spatial_idx;
+  }
+  return std::min( curr_spatial_idx / (num_spatial_partitions/buffs_at_level),  buffs_at_level - 1);
 }
     
 } // end namespace buff

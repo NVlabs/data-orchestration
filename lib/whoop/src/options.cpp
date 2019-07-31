@@ -48,7 +48,7 @@ int kCurrentTraceLevel(0);
 int kUserTraceLevel(0);
 int kCoalescingWindowSize(32);
 std::string kPhysicalPath(".");
-std::string kPhysicalFile("mini-vivaldi.physical.yaml");
+std::string kPhysicalFile("current.physical.yaml");
 std::string kProgramName;
 std::string kStatsFileName; 
     

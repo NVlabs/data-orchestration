@@ -88,6 +88,14 @@ class BindingTarget
     return false;
   }
 
+  bool operator == (const BindingTarget& other) const
+  {
+    return name_ == other.name_ && idx_ == other.idx_;
+  }
+  
+  int GetLevel();
+  int GetExpansionFactor();
+
 };
 
 
@@ -308,7 +316,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       update_pgen_log_.Send(info.index_);
       // Minor hack: the datapath doesn't show up as a source.
       // So if the mask is 0, make it 1.
-      int final_mask = info.updater_mask_.to_ulong();
+      long int final_mask = info.updater_mask_.to_ulong();
       updaters_pgen_log_.Send(final_mask == 0 ? 1 : final_mask);
     }
 
@@ -440,6 +448,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
     {
       // The buffer feeds another (usually smaller) buffer.
+      // Does it go to a direct connection, or to the network?
+      int phys_idx = binding_.GetLevel() == fronting_buffers_[dst_idx]->binding_.GetLevel() - 1 ? 
+        fronting_buffers_[dst_idx]->binding_.GetIndex() + 1 : binding_.GetExpansionFactor() + 1;
       ostr << " - Route:" << std::endl;
       ostr << "   - Circuit_id: 0" << std::endl;
       ostr << "     type: unicast" << std::endl;
@@ -451,7 +462,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       ostr << "       logical_connection: fill_data_in_0" << std::endl;
       ostr << "     physical_data_path:" << std::endl;
       ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
-      ostr << "         physical_connection_name: read_out_1" << std::endl;
+      ostr << "         physical_connection_name: read_out_" << phys_idx << std::endl;
       ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
       ostr << "         physical_connection_name: fill_in_0" << std::endl;
       ostr << std::endl;
@@ -468,7 +479,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
       ostr << "         physical_connection_name: drain_out_0" << std::endl;
       ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
-      ostr << "         physical_connection_name: update_in_1" << std::endl;
+      ostr << "         physical_connection_name: update_in_" << phys_idx << std::endl;
       ostr << std::endl;
     }
     
@@ -483,6 +494,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       for (int x = 0; x < num_dpaths; x++)
       {
         int dp_idx = spatial_idx * num_dpaths + x;
+        // Does it go to the local datapath, or to the network?
+        int phys_idx = compute_bindings[tile_level][dp_idx] == binding_ ? 0 : fronting_buffers_.size();
         ostr << " - Route:" << std::endl;
         ostr << "   - Circuit_id: 2" << std::endl;
         ostr << "     type: unicast" << std::endl;
@@ -494,7 +507,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         ostr << "       logical_connection: input_" << id << std::endl;
         ostr << "     physical_data_path:" << std::endl;
         ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
-        ostr << "         physical_connection_name: read_out_0" <<   std::endl;
+        ostr << "         physical_connection_name: read_out_" << phys_idx <<  std::endl;
         ostr << "       - physical_module_name: system:" << compute_bindings[tile_level][dp_idx].ToString() << "-CECC" << std::endl;
         ostr << "         physical_connection_name: data_in_0" << std::endl;
         ostr << std::endl;
@@ -511,7 +524,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         ostr << "       - physical_module_name: system:" << compute_bindings[tile_level][dp_idx].ToString() << "-CECC" << std::endl;
         ostr << "         physical_connection_name: data_out_0" << std::endl;
         ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
-        ostr << "         physical_connection_name: update_in_0" << std::endl;
+        ostr << "         physical_connection_name: update_in_" << phys_idx << std::endl;
         ostr << std::endl;
         local_dp_index++;
       }
@@ -1327,7 +1340,7 @@ class PrimTensor : public StatsCollection
           auto cur_buff = (*(*port_it)[level])[spatial_idx];
           if (cur_buff->binding_.IsUnbound())
           {
-            cur_buff->Bind(GetDefaultBinding(level, spatial_idx, (*port_it)[level]->size()));
+            cur_buff->Bind(GetDefaultBinding(cur_buff->starting_global_tile_level_, spatial_idx, (*port_it)[level]->size()));
           }
         }
       }
@@ -1673,6 +1686,10 @@ class Statement : public ExecTraceable
     if (next_)
     {
       next_->Init(ctx);
+    }
+    if (else_)
+    {
+      else_->Init(ctx);
     }
   }
     
