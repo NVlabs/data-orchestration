@@ -64,6 +64,11 @@ namespace whoop
   {
     return x == y;
   }
+
+  DataType_t IntEQOp(const DataType_t&x , const DataType_t& y)
+  {
+    return (int)x == (int)y;
+  }
   
   DataType_t NEQOp(const DataType_t&x , const DataType_t& y)
   {

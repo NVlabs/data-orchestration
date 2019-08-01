@@ -18,11 +18,11 @@ using namespace std;
 #define BYTES_PER_VERTEX   8
 
 #ifndef NUM_DOT_C
-// #define NUM_DOT_C 32
-#define NUM_DOT_C 1
+#define NUM_DOT_C 2
 #endif
 
 extern int ARG_BUFFET_GRANULARITY;
+extern int ARG_MAX_ITERATIONS;
 
 class CSF
 {
@@ -992,13 +992,13 @@ class GraphAlgorithm
 
             if( neighbors != whoop_neighbors )
             {
-                cout<<"v: "<<v<<" Neighbors: "<<neighbors<<" Whoop: "<<whoop_neighbors<<" srcData: "<<srcData->At({v})<<endl;
+//                 cout<<"v: "<<v<<" Neighbors: "<<neighbors<<" Whoop: "<<whoop_neighbors<<" srcData: "<<srcData->At({v})<<endl;
                 cout<<"Validation Failed"<<endl;
                 exit(0);
             }
             else 
             {
-                cout<<"v: "<<v<<" Neighbors: "<<neighbors<<" Whoop: "<<whoop_neighbors<<" srcData: "<<srcData->At({v})<<endl;
+//                 cout<<"v: "<<v<<" Neighbors: "<<neighbors<<" Whoop: "<<whoop_neighbors<<" srcData: "<<srcData->At({v})<<endl;
             }
             
 
@@ -1007,9 +1007,24 @@ class GraphAlgorithm
         }
     }
 
-    void Whoop_PageRankNibble_Untiled( int seed )
+    void Whoop_PageRankNibble_Untiled( int seed, int BufferL1_KB, int BufferL2_KB, FORMAT_TYPE format )
     {
         CalculateDegrees();
+
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
+
+        int L1_SIZE            = (BufferL1_KB*KILO / BYTES_PER_VERTEX);
+        int LLB_SIZE           = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
+
+        int FRONTIER_BUFFET          = LLB_SIZE;
+        int RESIDUAL_BUFFET          = 1;
+        int RESIDUAL_PRIME_BUFFET    = L1_SIZE;
+        int OUTDEGREE_BUFFET        = L1_SIZE;
+        int PAGERANK_BUFFET          = 1;
+
+        int SEG_ARRAY_BUFFET   = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+        int COORD_ARRAY_BUFFET = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+
 
         Var v("v"), s("s"), d("d");
         Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update");
@@ -1051,6 +1066,11 @@ class GraphAlgorithm
         
         w_while( frontier_empty == 0 );
         {
+            iters[0] += 1;
+
+//             pageRank->AddTileLevel( PAGERANK_BUFFET, PAGERANK_BUFFET, BUFFET_LINE_SIZE );
+//             residual->AddTileLevel( RESIDUAL_BUFFET, RESIDUAL_BUFFET, BUFFET_LINE_SIZE );
+            
             // Update The Page Rank
             t_for(v, 0, V);
             {
@@ -1108,8 +1128,6 @@ class GraphAlgorithm
             }
             end();
 
-            iters[0] += 1;
-
             /////////////////////////////////////////////////////
             ////  THE BELOW IS FOR DEBUGGING TO MATCH STATE    //
             /////////////////////////////////////////////////////
@@ -1147,7 +1165,7 @@ class GraphAlgorithm
             /////////////////////////////////////////////////////
 
 // 
-//             w_if( (iters[0] > 4) );
+//             w_if( (iters[0] > ARG_MAX_ITERATIONS) );
 //             {
 //                 frontier_empty = 1;
 //             }
@@ -1162,6 +1180,407 @@ class GraphAlgorithm
         cout<< "\tFinished WHOOP Mode..." <<endl;
 
         std::cout<<"Number of Iterations: "<<iters.At(0)<<" Frontier Size: "<<frontier_size.At(0)<<std::endl;
+
+        whoop::Done();
+    }
+
+    void Whoop_PageRankNibble_Untiled_Compressed( int seed, int RF_KB, int BufferL1_KB, int BufferL2_KB, FORMAT_TYPE format )
+    {
+        CalculateDegrees();
+
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
+
+        int RF_SIZE                  = (RF_KB*KILO        / BYTES_PER_VERTEX);
+        int L1_SIZE                  = (BufferL1_KB*KILO  / BYTES_PER_VERTEX);
+        int LLB_SIZE                 = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
+
+        int FRONTIER_BUFFET          = LLB_SIZE;
+        int RESIDUAL_BUFFET          = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+        int RESIDUAL_PRIME_BUFFET    = L1_SIZE;
+        int OUTDEGREE_BUFFET         = L1_SIZE;
+        int PAGERANK_BUFFET          = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+
+        int SEG_ARRAY_BUFFET         = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+        int COORD_ARRAY_BUFFET       = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+
+
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+
+        
+        Vec iters("iters"), frontier_size("frontier_size");
+        iters.Resize({1});
+        iters.At(0) = 0;
+        frontier_size.Resize({1});
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_empty = 1;
+
+        // Initialize The State
+        for(int i=0; i<V; i++)
+        {
+            residual_prime->At({i}) = 0;
+            residual->At({i}) = 0;
+            pageRank->At({i}) = 0;
+            frontier->At({i}) = 0;
+        }
+
+        // Set Up For Seed In
+        frontier->At({0})          = seed;
+        residual->At({seed})       = 1;
+        residual_prime->At({seed}) = 1;
+
+        //////////////////////////////////////////
+        // Set Up The Whoop State And Start Runs
+        //////////////////////////////////////////
+
+        frontier_empty       = 0;
+        frontier_cnt         = 1;
+        
+        w_while( frontier_empty == 0 );
+        {
+            iters[0] += 1;
+
+//             pageRank->AddTileLevel( PAGERANK_BUFFET, PAGERANK_BUFFET, BUFFET_LINE_SIZE );
+//             residual->AddTileLevel( RESIDUAL_BUFFET, RESIDUAL_BUFFET, BUFFET_LINE_SIZE );
+//             residual_prime->AddTileLevel( RESIDUAL_PRIME_BUFFET, RESIDUAL_PRIME_BUFFET, BUFFET_LINE_SIZE );
+//             outDegree->AddTileLevel( OUTDEGREE_BUFFET, OUTDEGREE_BUFFET, BUFFET_LINE_SIZE );
+//             frontier->AddTileLevel( FRONTIER_BUFFET, FRONTIER_BUFFET, BUFFET_LINE_SIZE );
+// 
+//             SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+//             CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+
+
+            // Update The Page Rank
+            t_for(p, 0, frontier_cnt);
+            {
+                v = (*frontier)[p];
+                (*pageRank)[v] += weight1 * (*residual)[v];
+                (*residual_prime)[v] = 0 + (*residual_prime)[v]*0;
+            }
+            end();
+
+            // Propogate The Residuals To Neighbors
+            t_for(q, 0, frontier_cnt);
+            {
+                s = (*frontier)[q];
+
+                pos_start = (*SegmentArray)[s];
+                pos_end   = (*SegmentArray)[s+1];
+                
+                t_for(p,pos_start,pos_end);
+                {
+                    d = (*CoordinateArray)[p];
+                    (*residual_prime)[d] += weight2 * (*residual)[s] / (*outDegree)[s];
+                }
+                end();
+            }
+            end();
+
+            // Generate The New Frontier
+            frontier_empty    = 1;
+            frontier_cnt      = 0;
+            
+            t_for(v, 0, V);
+            {
+                // copy the update residuals
+                (*residual)[v] = (*residual_prime)[v] + (*residual)[v]*0;
+
+                // Generate the new frontier
+                w_if( (*outDegree)[v] && ((*residual)[v] >= ((*outDegree)[v] * epsilon)) );
+                {
+                    (*frontier)[frontier_cnt] = v + (*frontier)[frontier_cnt]*0;
+                    frontier_empty    = 0;
+                    frontier_cnt     += 1;
+                }
+                end();
+            }
+            end();
+
+//             /////////////////////////////////////////////////////
+//             ////  THE BELOW IS FOR DEBUGGING TO MATCH STATE    //
+//             /////////////////////////////////////////////////////
+//             w_if( (iters[0] == 1) && (frontier_size[0] != 95) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 2) && (frontier_size[0] != 1682) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 3) && (frontier_size[0] != 2040) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 11) && (frontier_size[0] != 113) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+// 
+//             w_if( (iters[0] == 8) && (frontier_size[0] != 348) );
+//             {
+//                 frontier_empty = 1;
+//             }
+//             end();
+            /////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////
+
+
+            w_if( (iters[0] > ARG_MAX_ITERATIONS) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+
+        }
+        end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+
+        std::cout<<"Number of Iterations: "<<iters.At(0)<<" Frontier Size: "<<frontier_cnt.Access(0,0)<<std::endl;
+
+        whoop::Done();
+    }
+
+    #define VIVALDI_NUM_CT    4
+    #define VIVALDI_NUM_DOT_C 2
+    void Whoop_PageRankNibble_Untiled_Compressed_Parallel( int seed, int RF_KB, int BufferL1_KB, int BufferL2_KB, FORMAT_TYPE format )
+    {
+        CalculateDegrees();
+
+        int BUFFET_LINE_SIZE   = ARG_BUFFET_GRANULARITY;
+
+        int RF_SIZE                  = (RF_KB*KILO        / BYTES_PER_VERTEX);
+        int L1_SIZE                  = (BufferL1_KB*KILO  / BYTES_PER_VERTEX);
+        int LLB_SIZE                 = (BufferL2_KB*KILO  / BYTES_PER_VERTEX);
+
+        int FRONTIER_BUFFET          = LLB_SIZE;
+        int RESIDUAL_BUFFET          = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+        int RESIDUAL_PRIME_BUFFET    = L1_SIZE;
+        int OUTDEGREE_BUFFET         = L1_SIZE;
+        int PAGERANK_BUFFET          = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+
+        int SEG_ARRAY_BUFFET         = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+        int COORD_ARRAY_BUFFET       = LINE_SIZE_BYTES / BYTES_PER_VERTEX;
+
+        cout<<endl;
+
+        Var D1("D1"), S4("S4"), S3("S3"), S2("S2"), S1("S1"), D0("D0"), S0("S0"), tmp("tmp");
+        Var d1("d1"), s4("s4"), s3("s3"), s2("s2"), s1("s1"), d0("d0"), s0("s0");
+
+
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+
+        
+        Vec iters("iters"), frontier_size("frontier_size");
+        iters.Resize({1});
+        iters.At(0) = 0;
+        frontier_size.Resize({1});
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_empty = 1;
+
+        // Initialize The State
+        for(int i=0; i<V; i++)
+        {
+            residual_prime->At({i}) = 0;
+            residual->At({i}) = 0;
+            pageRank->At({i}) = 0;
+            frontier->At({i}) = 0;
+        }
+
+        // Set Up For Seed In
+        frontier->At({0})          = seed;
+        residual->At({seed})       = 1;
+        residual_prime->At({seed}) = 1;
+
+        //////////////////////////////////////////
+        // Set Up The Whoop State And Start Runs
+        //////////////////////////////////////////
+
+        S1 = VIVALDI_NUM_CT;
+        S2 = VIVALDI_NUM_DOT_C;
+
+        frontier_empty       = 0;
+        frontier_cnt         = 1;
+        
+        w_while( frontier_empty == 0 );
+        {
+            iters[0] += 1;
+
+//             pageRank->AddTileLevel( PAGERANK_BUFFET, PAGERANK_BUFFET, BUFFET_LINE_SIZE );
+//             residual->AddTileLevel( RESIDUAL_BUFFET, RESIDUAL_BUFFET, BUFFET_LINE_SIZE );
+//             residual_prime->AddTileLevel( RESIDUAL_PRIME_BUFFET, RESIDUAL_PRIME_BUFFET, BUFFET_LINE_SIZE );
+//             outDegree->AddTileLevel( OUTDEGREE_BUFFET, OUTDEGREE_BUFFET, BUFFET_LINE_SIZE );
+//             frontier->AddTileLevel( FRONTIER_BUFFET, FRONTIER_BUFFET, BUFFET_LINE_SIZE );
+// 
+//             SegmentArray->AddTileLevel( SEG_ARRAY_BUFFET, SEG_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+//             CoordinateArray->AddTileLevel( COORD_ARRAY_BUFFET, COORD_ARRAY_BUFFET, BUFFET_LINE_SIZE );
+
+
+            // Update The Page Rank
+            t_for(p, 0, frontier_cnt);
+            {
+                v = (*frontier)[p];
+                (*pageRank)[v] += weight1 * (*residual)[v];
+                (*residual_prime)[v] = 0 + (*residual_prime)[v]*0;
+            }
+            end();
+
+
+            // Divide the work equally among all the compute elements
+
+            S0 = frontier_cnt / (VIVALDI_NUM_DOT_C * VIVALDI_NUM_CT);
+            S0 = S0 & S0;
+            w_if( S0 < 1 );
+            {
+                S0 += 1;
+            }
+            end();
+
+            S3 = frontier_cnt / (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT);
+            S3 = S3 & S3;
+            w_if( frontier_cnt % (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT) );
+            {
+                S3 += 1;
+            }
+            end();
+            
+            // Propogate The Residuals To Neighbors
+            t_for(s3, 0, S3);
+            {
+                s_for(s2, 0, VIVALDI_NUM_DOT_C);
+                {
+                    s_for(s1, 0, VIVALDI_NUM_CT);
+                    {
+                        t_for(s0, 0, S0);
+                        {
+                            q = s3*S2*S1*S0 + s2*S1*S0 + s1*S0 + s0;
+
+                            w_if( q < frontier_cnt);
+                            {
+                                s = (*frontier)[q];
+
+                                pos_start = (*SegmentArray)[s];
+                                pos_end   = (*SegmentArray)[s+1];
+                
+                                t_for(p,pos_start,pos_end);
+                                {
+                                    d = (*CoordinateArray)[p];
+                                    (*residual_prime)[d] += weight2 * (*residual)[s] / (*outDegree)[s];
+                                }
+                                end();
+                            }
+                            end();
+                            
+                        }
+                        end();
+                    }
+                    end();
+                }
+                end();
+            }
+            end();
+
+            // Generate The New Frontier
+            frontier_empty    = 1;
+            frontier_cnt      = 0;
+            
+            t_for(v, 0, V);
+            {
+                // copy the update residuals
+                (*residual)[v] = (*residual_prime)[v] + (*residual)[v]*0;
+
+                // Generate the new frontier
+                w_if( (*outDegree)[v] && ((*residual)[v] >= ((*outDegree)[v] * epsilon)) );
+                {
+                    (*frontier)[frontier_cnt] = v + (*frontier)[frontier_cnt]*0;
+                    frontier_empty    = 0;
+                    frontier_cnt     += 1;
+                }
+                end();
+            }
+            end();
+
+            /////////////////////////////////////////////////////
+            ////  THE BELOW IS FOR DEBUGGING TO MATCH STATE    //
+            /////////////////////////////////////////////////////
+            w_if( (iters[0] == 1) && (frontier_cnt != 95) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+
+            w_if( (iters[0] == 2) && (frontier_cnt != 1682) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+
+            w_if( (iters[0] == 3) && (frontier_cnt != 2040) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+
+            w_if( (iters[0] == 11) && (frontier_cnt != 113) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+
+            w_if( (iters[0] == 8) && (frontier_cnt != 348) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+            /////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////
+
+
+            w_if( (iters[0] > ARG_MAX_ITERATIONS) );
+            {
+                frontier_empty = 1;
+            }
+            end();
+
+        }
+        end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+
+        std::cout<<"Number of Iterations: "<<iters.At(0)<<" Frontier Size: "<<frontier_cnt.Access(0,0)<<std::endl;
+        std::cout<<"S3: "<<S3.Access(0,0)<<" ";
+        std::cout<<"S2: "<<S2.Access(0,0)<<" ";
+        std::cout<<"S1: "<<S1.Access(0,0)<<" ";
+        std::cout<<"S0: "<<S0.Access(0,0)<<" ";
+        std::cout<<endl;
 
         whoop::Done();
     }
@@ -1199,7 +1618,7 @@ class GraphAlgorithm
         
         while( frontier_empty == 0 )
         {
-            std::cout<<iters<<" -- Frontier Size: "<<frontier_size<<std::endl;
+            iters++;
             
             // Update The Page Rank
             for(int v=0; v<V; v++)
@@ -1255,7 +1674,212 @@ class GraphAlgorithm
                     frontier->At({v}) = 0;
                 }
             }
+
+            std::cout<<iters<<" -- Frontier Size: "<<frontier_size<<std::endl;
+        }
+    }
+
+
+    void PageRankNibble_Untiled_Compressed( int seed )
+    {
+        CalculateDegrees();
+
+        int iters = 0;
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual_prime->At({v}) = 0;
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({frontier_size}) = seed;
+        residual->At({seed})          = 1;
+        residual_prime->At({seed})    = 1;
+        
+        frontier_empty       = 0;
+        frontier_size        = 1;
+        
+        while( frontier_empty == 0 )
+        {
             iters++;
+            
+            // Update The Page Rank
+            for(int p=0; p<frontier_size; p++)
+            {
+                v = frontier->At({p});
+                pageRank->At({v}) += weight1 * residual->At({v});
+                residual_prime->At({v}) = 0;
+            }
+
+            // Propogate The Residuals To Neighbors
+            for(int q=0; q<frontier_size; q++)
+            {
+                s = frontier->At({q});
+
+                pos_start = SegmentArray->At({s});
+                pos_end   = SegmentArray->At({s+1});
+
+                for(p=pos_start; p<pos_end; p++)
+                {
+                    d = CoordinateArray->At({p});
+                    residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                }
+            }
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
+                    frontier->At({frontier_size}) = v;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+            }
+
+            cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<std::endl;
+
+            if( iters > ARG_MAX_ITERATIONS )
+            {
+                frontier_empty = 1;
+            }
+        }
+    }
+
+    void PageRankNibble_Untiled_Compressed_Parallel( int seed )
+    {
+        CalculateDegrees();
+
+        int S1 = VIVALDI_NUM_CT;
+        int S2 = VIVALDI_NUM_DOT_C;
+
+        int iters = 0;
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual_prime->At({v}) = 0;
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({frontier_size}) = seed;
+        residual->At({seed})          = 1;
+        residual_prime->At({seed})    = 1;
+        
+        frontier_empty       = 0;
+        frontier_size        = 1;
+        
+        while( frontier_empty == 0 )
+        {
+            iters++;
+
+//             std::cout<<iters<<" -- Frontier Size: "<<frontier_size<<std::endl;
+            
+            // Update The Page Rank
+            for(int p=0; p<frontier_size; p++)
+            {
+                v = frontier->At({p});
+                pageRank->At({v}) += weight1 * residual->At({v});
+                residual_prime->At({v}) = 0;
+            }
+
+            int S0 = frontier_size / (VIVALDI_NUM_DOT_C * VIVALDI_NUM_CT);
+
+            if( S0 < 1 ) S0++;
+
+            int parallelCnt = S0*VIVALDI_NUM_CT*VIVALDI_NUM_DOT_C;
+
+            int S3 = frontier_size / (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT);
+            if( frontier_size % (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT) ) 
+            {
+                S3 += 1;
+            }
+            
+            // Propogate The Residuals To Neighbors
+            for(int s3=0; s3<S3; s3++) 
+            {
+                for(int s2=0; s2<VIVALDI_NUM_DOT_C; s2++)
+                {
+                    for(int s1=0; s1<VIVALDI_NUM_CT; s1++) 
+                    {
+                        for(int s0=0; s0<S0; s0++) 
+                        {
+                            int q = s3*S2*S1*S0 + s2*S1*S0 + s1*S0 + s0;
+                            
+                            if( q < frontier_size ) 
+                            {
+                                s = frontier->At({q});
+
+                                pos_start = SegmentArray->At({s});
+                                pos_end   = SegmentArray->At({s+1});
+
+                                for(p=pos_start; p<pos_end; p++)
+                                {
+                                    d = CoordinateArray->At({p});
+                                    residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
+                    frontier->At({frontier_size}) = v;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+            }
+
+            cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<" \t\tS3: "<<S3<<" S2: "<<S2<<" S1: "<<S1<<" S0: "<<S0<<endl;
+
+            if( iters > ARG_MAX_ITERATIONS )
+            {
+                frontier_empty = 1;
+            }
         }
     }
 
@@ -1294,7 +1918,7 @@ class GraphAlgorithm
                         for(int p=pos_start; p<pos_end; p++)
                         {
                             d = CoordinateArray->At(p);
-                            dstData->At({s}) += srcData->At({d})*3.5;
+                            dstData->At({s}) += srcData->At({d});
                         }
                     }
                     

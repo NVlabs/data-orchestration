@@ -20,11 +20,14 @@ int ARG_PRINT_GRAPH        = 0;
 int ARG_NUM_COMPUTE_TILE   = 1;
 int ARG_NUM_DOT_C          = NUM_DOT_C;
 int ARG_NUM_DOT_M          = -1;
-int ARG_L1_BUFFET_SIZE_KB  = 64;
-int ARG_L2_BUFFET_SIZE_KB  = 1024;
+int ARG_RF_BUFFET_SIZE_KB  = 32;
+int ARG_L1_BUFFET_SIZE_KB  = 256;
+int ARG_L2_BUFFET_SIZE_KB  = 2048;
 int ARG_RUN_SERIAL         = 0;
 int ARG_RUN_MODE           = 0;
 int ARG_COMPRESSION_FORMAT = 0;
+int ARG_MAX_ITERATIONS     = 1024;
+int ARG_USE_SEED           = 0;
 
 void MyInit(int argc, char** argv)
 {
@@ -36,11 +39,13 @@ void MyInit(int argc, char** argv)
     AddOption( &ARG_NUM_COMPUTE_TILE, "numCT", "Number of Compute Tiles");
     AddOption( &ARG_NUM_DOT_C, "dotC", "Number of Compute Tiles");
     AddOption( &ARG_NUM_DOT_M, "dotM", "Number of Compute Tiles");
+    AddOption( &ARG_RF_BUFFET_SIZE_KB, "RF", "RF Buffet Size");
     AddOption( &ARG_L1_BUFFET_SIZE_KB, "L1", "L1 Buffet Size");
     AddOption( &ARG_L2_BUFFET_SIZE_KB, "L2", "L2 Buffet Size");
     AddOption( &ARG_RUN_SERIAL, "serial", "Serial Mode");
     AddOption( &ARG_RUN_MODE, "mode", "Run Mode");
     AddOption( &ARG_COMPRESSION_FORMAT, "format", "Compression Format");
+    AddOption( &ARG_MAX_ITERATIONS, "max_iter", "Max Iterations");
 
     whoop::Init(argc, argv);
 }
@@ -197,10 +202,7 @@ int main(int argc, char** argv)
     /******************************************************/
     /******************************************************/
 
-    graphAlg.PageRankNibble_Untiled(0);
-    graphAlg.Whoop_PageRankNibble_Untiled(0);
-
-    exit(0);
+   
     if( ARG_RUN_MODE == MODE_UNTILED ) 
     {
 
@@ -363,6 +365,41 @@ int main(int argc, char** argv)
         cout<<"(+)  Running Online Tiling Copland ..."<<endl;    
         graphAlg.OnlineTiling_CSR_Copland();
 
+    }    
+    else if( ARG_RUN_MODE == MODE_UNTILED_COMPRESSED_LGC_NIBBLE )
+    {
+        int seed = ARG_USE_SEED;
+
+        // Determine Tile Sizes Using On-Chip Buffer Sizes
+        CreateBufferBasedTileSizes( V, S0, D0, S1, D1, S2, D2 );
+
+        // Print Setup Information
+        PrintInfo( graphAlg );
+
+        // Print Tile Info
+        PrintTileInfo( {S0,D0,S1,D1,S2,D2} );
+
+//     graphAlg.PageRankNibble_Untiled( seed );
+//     graphAlg.Whoop_PageRankNibble_Untiled(seed, ARG_L1_BUFFET_SIZE_KB, ARG_L2_BUFFET_SIZE_KB, formatIn);
+
+        graphAlg.PageRankNibble_Untiled_Compressed( seed );
+        graphAlg.Whoop_PageRankNibble_Untiled_Compressed(seed, ARG_RF_BUFFET_SIZE_KB, ARG_L1_BUFFET_SIZE_KB, ARG_L2_BUFFET_SIZE_KB, formatIn);
+    }    
+    else if( ARG_RUN_MODE == MODE_UNTILED_COMPRESSED_PARALLEL_LGC_NIBBLE )
+    {
+        int seed = ARG_USE_SEED;
+
+        // Determine Tile Sizes Using On-Chip Buffer Sizes
+        CreateBufferBasedTileSizes( V, S0, D0, S1, D1, S2, D2 );
+
+        // Print Setup Information
+        PrintInfo( graphAlg );
+
+        // Print Tile Info
+        PrintTileInfo( {S0,D0,S1,D1,S2,D2} );
+
+        graphAlg.PageRankNibble_Untiled_Compressed_Parallel( seed );
+        graphAlg.Whoop_PageRankNibble_Untiled_Compressed_Parallel(seed, ARG_RF_BUFFET_SIZE_KB, ARG_L1_BUFFET_SIZE_KB, ARG_L2_BUFFET_SIZE_KB, formatIn);
     }    
     else 
     {

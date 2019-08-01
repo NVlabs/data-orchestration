@@ -39,6 +39,7 @@ namespace whoop
   DataType_t DivOp(const DataType_t& x, const DataType_t& y);
   DataType_t ModOp(const DataType_t& x, const DataType_t& y);
   DataType_t EQOp(const DataType_t&x , const DataType_t& y);
+  DataType_t IntEQOp(const DataType_t&x , const DataType_t& y);
   DataType_t NEQOp(const DataType_t&x , const DataType_t& y);
   DataType_t GTEOp(const DataType_t& x, const DataType_t& y);
   DataType_t LTEOp(const DataType_t&x , const DataType_t& y);
