@@ -864,7 +864,7 @@ class Tensor : public ast::PrimTensor
   void BindTileLevel(int tile_level, const BindingTarget& target, int expansion_factor = 1, int port = 0)
   {
     int logical_level_size = (*buffer_levels_[port])[tile_level]->size();
-    int tiles_per_target = std::max(expansion_factor / logical_level_size, 1);
+    int tiles_per_target = std::max(logical_level_size / expansion_factor, 1);
     int cur_target_idx = std::min(target.GetIndex(), logical_level_size - 1);
     for (int x = 0; x < logical_level_size; x++)
     {
