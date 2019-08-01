@@ -28,9 +28,10 @@
 # Stop on errors
 set -e
 # build the executable
-scons -u -Q
+scons -u -Q debug=1
 
 executable=./conv1d-parallel-weight-stationary.bin
+#executable="gdb --args ./conv1d-parallel-weight-stationary.bin"
 
 if [ $# -eq 2 ]; then
     infile=$1

@@ -84,19 +84,24 @@ int main(int argc, char** argv)
 
   t_for(p1, 0, P1);
   {
-    inputs.AddTileLevel(P0 + R0, 1);
-    weights.AddTileLevel(1);
-    outputs.AddTileLevel(P0);
     t_for(r1, 0, R1);
     {
+      inputs.AddTileLevel(P0 + R0, 1);
+      weights.BypassTileLevel();
+      outputs.AddTileLevel(P0);
+
       t_for(p0, 0, P0);
       {
         inputs.AddTileLevel(R0, 1);
         weights.AddTileLevel(R0);
-        outputs.AddTileLevel(1);
+        outputs.BypassTileLevel();
 
         s_for(r0, 0, R0);
         {
+          inputs.BypassTileLevel();
+          weights.BypassTileLevel();
+          outputs.AddTileLevel(1);
+        
           outputs[p1 * kOutputWidthL0 + p0] += 
            inputs[p1 * kOutputWidthL0 + p0 + r1 * kWeightWidthL0 + r0] * 
                                      weights[r1 * kWeightWidthL0 + r0];

@@ -217,9 +217,10 @@ extern bool need_global_tile_level;
 // Track how many spatial tiles there are at each tile level.
 extern std::vector<int> tile_level_spatial_expansions;
 
-
 int NumSpatialPartitionsFlattened();
 int ActualSpatialPartitionHeight(int count_ones = false);
+void BindCurrentComputeLevel(const BindingTarget& target, int expansion_factor = 1);
+
 
 class Tensor;
 class Vec;
@@ -670,7 +671,7 @@ class Tensor : public ast::PrimTensor
  private:
   void Init()
   {
-    std::shared_ptr<buff::BufferModel> backing(new buff::BackingBufferModel("backing_" + name_, vals_.size()));
+    std::shared_ptr<buff::BufferModel> backing(new buff::BackingBufferModel(name_, vals_.size()));
     std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>> 
         backing_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, backing));
     // Set up tile-level tracking state.
@@ -836,6 +837,12 @@ class Tensor : public ast::PrimTensor
     }
 
   }
+
+  void BypassTileLevel(int granularity = 1, int port = 0)
+  {
+    // TODO: This should be a No-Op
+    AddTileLevel(granularity, granularity, granularity, port);
+  }
   
   int AddPort()
   {
@@ -851,6 +858,40 @@ class Tensor : public ast::PrimTensor
     tile_level_deliminators[id_].push_back(std::deque<int>());
     current_tile_level[id_].push_back(0);
     return buffer_levels_.size() - 1;
+  }
+  
+  void BindTile(int tile_level, int spatial_idx, const BindingTarget& target, int port = 0)
+  {
+    (*(*buffer_levels_[port])[tile_level])[spatial_idx]->Bind(target);
+  };
+  
+  void BindTileLevel(int tile_level, const BindingTarget& target, int expansion_factor = 1, int port = 0)
+  {
+    int logical_level_size = (*buffer_levels_[port])[tile_level]->size();
+    int tiles_per_target = std::max(logical_level_size / expansion_factor, 1);
+    int cur_target_idx = std::min(target.GetIndex(), logical_level_size - 1);
+    for (int x = 0; x < logical_level_size; x++)
+    {
+      BindTile(tile_level, x, {target.GetName(), cur_target_idx}, port);
+      if ((x+1) % tiles_per_target == 0)
+      {
+        // Handle the remainder if it doesn't divide evenly. Just put them all on the final.
+        if (cur_target_idx < expansion_factor - 1)
+        {
+          cur_target_idx++;
+        }
+      }
+    }
+  };
+
+  void BindCurrentTileLevel(const BindingTarget& target, int expansion_factor = 1, int port = 0)
+  {
+    BindTileLevel(current_tile_level[id_][port], target, expansion_factor, port);
+  };
+
+  void BindBacking(const BindingTarget& target)
+  {
+    BindTileLevel(0, target, 1);
   }
 
 };
@@ -1020,6 +1061,31 @@ class TensorPort
   void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1)
   {
     target_->AddTileLevel(size, shrink_granularity, granularity, port_);
+  }
+
+  void BypassTileLevel(int granularity = 1)
+  {
+    target_->BypassTileLevel(granularity, port_);
+  }
+  
+  void BindTile(int tile_level, int spatial_idx, const BindingTarget& target)
+  {
+    target_->BindTile(tile_level, spatial_idx, target, port_);
+  };
+  
+  void BindTileLevel(int tile_level, const BindingTarget& target, int expansion_factor = 1, int port = 0)
+  {
+    target_->BindTileLevel(tile_level, target, expansion_factor, port_);
+  };
+
+  void BindCurrentTileLevel(const BindingTarget& target, int expansion_factor = 1, int port = 0)
+  {
+    target_->BindCurrentTileLevel(target, expansion_factor, port_);
+  };
+
+  void BindBacking(const BindingTarget& target)
+  {
+    ASSERT(false) << "Binding the backing store should be done on the main tensor, not ports." << EndT;
   }
 };
 
