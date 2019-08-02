@@ -93,8 +93,8 @@ class BindingTarget
     return name_ == other.name_ && idx_ == other.idx_;
   }
   
-  int GetLevel();
-  int GetExpansionFactor();
+  int GetLevel() const;
+  int GetExpansionFactor() const;
 
 };
 
@@ -119,6 +119,7 @@ std::string GetComputeBoundName(int tile_level, int dp_idx);
 void AddPhysicalComputeMap(const BindingTarget& target, const std::string& logical);
 void AddPhysicalBufferMap(const BindingTarget& target, const std::string& logical);
 void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTarget, std::string>& phsyical_map);
+int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst);
 
 namespace buff
 {
@@ -449,8 +450,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     {
       // The buffer feeds another (usually smaller) buffer.
       // Does it go to a direct connection, or to the network?
-      int phys_idx = binding_.GetLevel() == fronting_buffers_[dst_idx]->binding_.GetLevel() - 1 ? 
-        fronting_buffers_[dst_idx]->binding_.GetIndex() + 1 : binding_.GetExpansionFactor() + 1;
+      int phys_idx = GetPhysicalIndex(binding_, fronting_buffers_[dst_idx]->binding_);
       ostr << " - Route:" << std::endl;
       ostr << "   - Circuit_id: 0" << std::endl;
       ostr << "     type: unicast" << std::endl;

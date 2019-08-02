@@ -52,7 +52,7 @@ std::vector<std::vector<BindingTarget>> compute_bindings{};
 std::multimap<BindingTarget, std::string> physical_compute_map{};
 std::multimap<BindingTarget, std::string> physical_buffer_map{};
 
-int BindingTarget::GetLevel()
+int BindingTarget::GetLevel() const
 {
   for (int level = 0; level != default_bindings.size(); level++)
   {
@@ -61,7 +61,7 @@ int BindingTarget::GetLevel()
   return -1;
 }
 
-int BindingTarget::GetExpansionFactor()
+int BindingTarget::GetExpansionFactor() const
 {
   int level = GetLevel();
   if (level == default_bindings.size() - 1) return 0;
@@ -251,6 +251,21 @@ void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTa
       ostr << std::endl;
     }
     binding_id++;
+  }
+}
+
+int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst)
+{
+  if (src.GetLevel() + 1 == dst.GetLevel())
+  {
+    // They have a direct connection.
+    // Return the local index, which is increased by one because of local output.
+    return (dst.GetIndex() % src.GetExpansionFactor()) + 1;
+  }
+  else
+  {
+    // Use the index for bypass, which is greater than local and direct.
+    return src.GetExpansionFactor() + 1;
   }
 }
 
