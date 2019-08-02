@@ -216,11 +216,13 @@ class CompressedTensor
   {
       int dim = num_dims_ - 1;        
       int kSegSize, kCoordSize, prev_kCoordSize;
-  
+      std::cout << "compressed tensor init for " << name_ << " num_dims_ " << num_dims_ << std::endl;
       values_ = std::shared_ptr<Vec>(new Vec(name_ + "_values"));
 
       for (int x = 0; x < num_dims_; x++)
       {
+
+        std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
         segments_[x] = std::shared_ptr<Vec>(new Vec(name_ + "_segments_" + std::to_string(x)));
         coordinates_[x] = std::shared_ptr<Vec>(new Vec(name_ + "_coordinates_" + std::to_string(x)));
       }
@@ -272,7 +274,7 @@ class CompressedTensor
       for(int dim=0; dim < coord.size(); dim++)
       {
         int index_dim = (coord.size()-1)-dim;
-        whoop::T(0) << "      Coord insert at: " << coord[index_dim] << whoop::EndT;
+        //whoop::T(0) << "      Coord insert at: " << coord[index_dim] << whoop::EndT;
 
         //don't duplicate like coordinates of the CSF tree (compress)
         //  traverse the tree until we don't find a suitable coord node
@@ -282,12 +284,12 @@ class CompressedTensor
         //  this works as insertions must be done in strict ascending order
         if (attempt_compress == false || (coordinates_[dim]->size() == 0) || (coord[index_dim] != coordinates_[dim]->PrimAt(coordinates_[dim]->size()-1)))
         {
-          whoop::T(0) << "      Coord added " << whoop::EndT;
+          //whoop::T(0) << "      Coord added " << whoop::EndT;
           //add new coordinate
           coordinates_[dim]->PushBack(coord[index_dim]);
   
           //we found a new value at our fiber, increase count local to our fiber
-          whoop::T(0) << "      Segment adjust at : " << (segments_[dim]->PrimSize() - 1) << " newval: " << segments_[dim]->At(segments_[dim]->PrimSize() - 1) << whoop::EndT;
+          //whoop::T(0) << "      Segment adjust at : " << (segments_[dim]->PrimSize() - 1) << " newval: " << segments_[dim]->At(segments_[dim]->PrimSize() - 1) << whoop::EndT;
           segments_[dim]->At(segments_[dim]->PrimSize() - 1) += 1; // = coordinates_[dim]->PrimSize();
 
           //we found a new value - new fiber at next rank.
@@ -295,13 +297,13 @@ class CompressedTensor
           if (dim != (num_dims_-1)) 
           {
             segments_[dim+1]->PushBack(segments_[dim+1]->At(segments_[dim+1]->PrimSize() - 1));
-            whoop::T(0) << "      Segment added in next dim at : " << (segments_[dim+1]->PrimSize() - 1) << " newval: " << segments_[dim+1]->At(segments_[dim+1]->PrimSize() -1) << whoop::EndT;
+            //whoop::T(0) << "      Segment added in next dim at : " << (segments_[dim+1]->PrimSize() - 1) << " newval: " << segments_[dim+1]->At(segments_[dim+1]->PrimSize() -1) << whoop::EndT;
           }
 
           attempt_compress = false; //we didn't find a match and shouldn't continue to compress subsequent dims
         }
         else {
-          whoop::T(0) << "      Coord existing " << whoop::EndT;
+          //whoop::T(0) << "      Coord existing " << whoop::EndT;
         }
 
 
@@ -311,7 +313,7 @@ class CompressedTensor
 
         if( dim == (num_dims_-1) )
         {
-            whoop::T(0) << "      Value added " << whoop::EndT;
+            //whoop::T(0) << "      Value added " << whoop::EndT;
             values_->PushBack(val_in);
         }
 
@@ -432,19 +434,32 @@ class CompressedTensor
       return segments_[dim_arg]->At( {pos} );
   }
 
-  int GetSegment( int dim_arg, int pos )
+  int GetSegmentAt( int dim_arg, int pos )
   {
       return segments_[dim_arg]->At( {pos} );
   }
 
-  int GetSegmentBegin( int dim_arg, int pos )
+
+  int GetSegmentBeginAt(int dim_arg, int pos)
   {
       return segments_[dim_arg]->At( {pos} );
   }
 
-  int GetSegmentEnd( int dim_arg, int pos )
+  int GetSegmentEndAt(int dim_arg, int pos)
   {
-      return segments_[dim_arg]->At( {pos + 1} );
+      return segments_[dim_arg]->At( {pos+1} );
+  }
+
+
+  TensorDisambiguator GetSegmentRootBegin(Var& dummy)
+  {
+      return (*(segments_[0]))[dummy*0+0];
+  }
+
+  TensorDisambiguator GetSegmentRootEnd(Var& dummy)
+  {
+
+      return (*(segments_[0]))[dummy*0+1];
   }
 
   TensorDisambiguator GetSegmentBegin( int dim_arg, Var& pos )
@@ -461,7 +476,7 @@ class CompressedTensor
 
   
 
-  int GetCoordinate( int dim_arg, int pos )
+  int GetCoordinateAt( int dim_arg, int pos )
   {
       return coordinates_[dim_arg]->At( {pos} );
   }
@@ -475,7 +490,7 @@ class CompressedTensor
 
 
 
-  int GetValue( int pos )
+  int GetValueAt( int pos )
   {
     return values_->At({pos});
   }
@@ -549,6 +564,8 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
   
   void ReadInput(bool is_ref = false)
   {
+
+      std::cout << "ReadInput before for " << name_ << " num_dims_ " << num_dims_ << std::endl;
     std::ifstream ifs;
     ifs.open(filename_);
     if (ifs.fail())
@@ -570,6 +587,17 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
     boost::archive::text_iarchive ia(ifs);
     ia >> (*this);
     TrimFat();
+
+
+    std::cout << "ReadInput after for " << name_ << " num_dims_ " << num_dims_ << std::endl;
+    for (int x = 0; x < num_dims_; x++)
+    {
+
+      std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
+      segments_[x]->AppendToName(name_ + "_segments_" + std::to_string(x));
+      coordinates_[x]->AppendToName(name_ + "_coordinates_" + std::to_string(x));
+    }
+    values_->AppendToName(name_ + "_values");
   }
 };
 
@@ -613,6 +641,14 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
     boost::archive::text_iarchive ia(ifs);
     ia >> (*this);
     TrimFat();
+    for (int x = 0; x < num_dims_; x++)
+    {
+
+      std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
+      segments_[x]->AppendToName(name_ + "_segments_" + std::to_string(x));
+      coordinates_[x]->AppendToName(name_ + "_coordinates_" + std::to_string(x));
+    }
+    values_->AppendToName(name_ + "_values");
   }
 
   
@@ -759,15 +795,15 @@ class FullyConcordantScanner
     for (int dim = 0; dim < num_dims_; dim++)
     {
       cur_positions_[dim]++;
-      cur_point_[dim] = target_->GetCoordinate(dim, cur_positions_[dim]);
+      cur_point_[dim] = target_->GetCoordinateAt(dim, cur_positions_[dim]);
       if (cur_positions_[dim] != cur_segment_bounds_[dim])
       {
         break; // If any inner dim wasn't done, the remaining outer dims won't be done either.
       }
-      cur_segment_bounds_[dim] = target_->GetSegment(dim, cur_positions_[dim+1]+1);
+      cur_segment_bounds_[dim] = target_->GetSegmentAt(dim, cur_positions_[dim+1]+1);
     }
 
-    int cur_value = target_->GetValue(cur_positions_[0]);
+    int cur_value = target_->GetValueAt(cur_positions_[0]);
 
     return std::make_pair(cur_point_, cur_value);
   }

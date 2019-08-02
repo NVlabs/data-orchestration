@@ -1142,7 +1142,6 @@ class PrimTensor : public StatsCollection
   {
     vals_.push_back(val);
     dim_sizes_[dim]++;
-    std::cout << " pushing back. size: " << dim_sizes_[dim] << std::endl;
   }
 
   void PrimShrinkToFit()
