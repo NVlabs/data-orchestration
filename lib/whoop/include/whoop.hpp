@@ -667,7 +667,7 @@ class Tensor : public ast::PrimTensor
  private:
   void Init()
   {
-    std::shared_ptr<buff::BufferModel> backing(new buff::BackingBufferModel(name_, vals_.size()));
+    std::shared_ptr<buff::BufferModel> backing(new buff::BackingBufferModel(name_, vals_.size(), 1));
     std::shared_ptr<std::vector<std::shared_ptr<buff::BufferModel>>> 
         backing_vec(new std::vector<std::shared_ptr<buff::BufferModel>>(1, backing));
     // Set up tile-level tracking state.
@@ -740,9 +740,10 @@ class Tensor : public ast::PrimTensor
     return this->operator[](TreeBuilder(body_e));
   }
 
-  void SetBackingRowBufferWidth(int size)
+  void SetBackingGranularity(int g)
   {
-    (*buffer_levels_[0])[0]->at(0)->SetBufferWidth(size);
+    assert(g > 0);
+    (*buffer_levels_[0])[0]->at(0)->SetAccessGranularity(g);
   }
 
   void AddBufferLevel(int size)
@@ -751,7 +752,7 @@ class Tensor : public ast::PrimTensor
     AddTileLevel(size);
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
+  void AddTileLevel(int size, int shrink_granularity = 0, int access_granularity = 1, int port = 0)
   {
       
     user_tracer_.ASSERT(size > 0) << "AddTileLevel(): size must be greater than 0." << EndT;
@@ -808,16 +809,18 @@ class Tensor : public ast::PrimTensor
       {
         nm += "_" + std::to_string(x);
       }
-      if (size % granularity != 0)
-      {
-        size += (granularity - (size % granularity));
-      }
       if (x != 0 && (x % backing_iteration_interval == 0))
       {
         backing_it++;
       }
+      // My fill granularity is the previous guy's read granularity.
+      int fill_granularity = (*backing_it)->access_granularity_;
+      if (size % fill_granularity != 0)
+      {
+        size += (fill_granularity - (size % fill_granularity));
+      }
       int local_idx = (*backing_it)->fronting_buffers_.size();
-      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, granularity));
+      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, access_granularity, fill_granularity));
       (*new_buffs)[x] = new_buff;
       (*new_buffs)[x]->backing_buffer_ = *backing_it;
       (*backing_it)->fronting_buffers_.push_back(new_buff);

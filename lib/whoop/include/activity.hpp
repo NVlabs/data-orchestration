@@ -154,6 +154,8 @@ class ShrinkPatternGeneratorLog : public Log
 {
   int shrinks_ = 0;
   int shrink_granularity_ = 1;
+  int fill_granularity_ = 1;
+
  public:
   void EmitShrink(int num)
   {
@@ -171,14 +173,15 @@ class ShrinkPatternGeneratorLog : public Log
     shrinks_ += num;
     if (shrinks_ >= shrink_granularity_)
     {
-      EmitShrink(shrinks_);
+      EmitShrink(shrinks_ / fill_granularity_);
       shrinks_ = 0;
     }
   }
   
-  void SetShrinkGranularity(int g)
+  void SetShrinkGranularity(int g, int fill_gran)
   {
-    shrink_granularity_ = g;
+    shrink_granularity_ = g * fill_gran;
+    fill_granularity_ = fill_gran;
   }
 };
 
@@ -186,6 +189,9 @@ class BuffetCommandLog : public Log
 {
   int shrinks_ = 0;
   int shrink_granularity_ = 1;
+  int last_idx_ = -1;
+  int num_coalesces_ = 0;
+  int access_granularity_ = 1;
   bool modified_ = false;
   int head_ = 0;
   int size_ = 0;
@@ -213,9 +219,19 @@ class BuffetCommandLog : public Log
     size_ = size;
   }
   
-  void Read(bool will_update = false)
+  bool Read(int idx, bool will_update = false)
   {
-    if (!options::kShouldLogActivity) return;
+    if (!options::kShouldLogActivity) return true;
+    if (idx == last_idx_)
+    {
+      num_coalesces_++;
+      if (num_coalesces_ != access_granularity_)
+      {
+        return true;
+      }
+    }
+    num_coalesces_ = 0;
+    last_idx_ = idx;
     boost::property_tree::ptree read_action;
     //read_action.put("UnitInstance", name_);
     //read_action.put("UnitClass", "SymphonyBuffet");
@@ -224,6 +240,7 @@ class BuffetCommandLog : public Log
     read_action.put("Params.buffet_state_id_", 0);
     read_action.put("Params.will_update_", will_update);
     AddActivity(read_action);
+    return false;
   }
   
   void EmitShrink()
@@ -256,9 +273,16 @@ class BuffetCommandLog : public Log
     }
   }
   
-  void SetShrinkGranularity(int g)
+  void SetShrinkGranularity(int g, int fill_gran)
   {
-    shrink_granularity_ = g;
+    assert(g > 0);
+    shrink_granularity_ = g * fill_gran;
+  }
+
+  void SetAccessGranularity(int g)
+  {
+    assert(g > 0);
+    access_granularity_ = g;
   }
   
   void SetModified()
@@ -286,6 +310,10 @@ class ComputeEngineLog : public Log
 {
  public:
 
+  // Is this log disabled due to being a vector lane?
+  bool enabled_ = true;
+  bool idle_ = true;
+
   // Which tensors are we reading for the current op?
   std::bitset<64> read_activity_by_tensor_;
   
@@ -295,16 +323,17 @@ class ComputeEngineLog : public Log
  public:
   void EmitOp(const std::bitset<64>& outputs)
   {
-    if (!options::kShouldLogActivity) return;
+    if (!options::kShouldLogActivity || !enabled_) return;
     // Today all ops are the same. They take some number of inputs
     // and produce some number of outputs.
     sgen_log_.Send(read_activity_by_tensor_.to_ulong());
     dgen_log_.Send(outputs.to_ulong());
     read_activity_by_tensor_.reset();
+    idle_ = false;
   }
   void LogInputTensor(const int& id)
   {
-    if (!options::kShouldLogActivity) return;
+    if (!options::kShouldLogActivity || !enabled_) return;
     if (read_activity_by_tensor_[id])
     {
       EmitOp(0); // No output
@@ -313,7 +342,7 @@ class ComputeEngineLog : public Log
   }
   void LogOutputTensor(const std::bitset<64>& outputs)
   {
-    if (!options::kShouldLogActivity) return;
+    if (!options::kShouldLogActivity || !enabled_) return;
     EmitOp(outputs);
   }
   

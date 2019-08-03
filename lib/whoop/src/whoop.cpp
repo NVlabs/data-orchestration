@@ -534,6 +534,7 @@ void Done(std::string ofile)
   DumpStats(ofile);
   if (options::kShouldLogActivity)
   {
+    DisableIdleCompute();
     LogActivity(options::kStatsFileName + ".logical.trc");
     LogPhysicalActivity(options::kStatsFileName + ".physical.trc");
     LogTensorTopology(options::kStatsFileName + ".logical.yaml");
@@ -610,9 +611,10 @@ void Program::AddInitialStatements()
   s_for(*v, 0, 1);
 }
 
+/* TODO: FIX
 void BindCurrentComputeLevel(const BindingTarget& target, int expansion_factor)
 {
   BindComputeLevel(current_global_tile_level, target, expansion_factor);
 }
-
+*/
 }
