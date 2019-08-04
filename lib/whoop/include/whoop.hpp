@@ -756,7 +756,7 @@ class Tensor : public ast::PrimTensor
     AddTileLevel(size);
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 0, int access_granularity = 1, int port = 0)
+  void AddTileLevel(int size, int shrink_granularity = 0, int access_granularity = 1, int extra_buffering = 0, int port = 0)
   {
       
     user_tracer_.ASSERT(size > 0) << "AddTileLevel(): size must be greater than 0." << EndT;
@@ -824,7 +824,7 @@ class Tensor : public ast::PrimTensor
         size += (fill_granularity - (size % fill_granularity));
       }
       int local_idx = (*backing_it)->fronting_buffers_.size();
-      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, access_granularity, fill_granularity));
+      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, access_granularity, fill_granularity, extra_buffering));
       (*new_buffs)[x] = new_buff;
       (*new_buffs)[x]->backing_buffer_ = *backing_it;
       (*backing_it)->fronting_buffers_.push_back(new_buff);
@@ -841,10 +841,10 @@ class Tensor : public ast::PrimTensor
 
   }
 
-  void BypassTileLevel(int granularity = 1, int port = 0)
+  void BypassTileLevel(int granularity = 1, int extra_buffering = 0, int port = 0)
   {
     // TODO: This should be a No-Op
-    AddTileLevel(granularity, granularity, granularity, port);
+    AddTileLevel(granularity, granularity, granularity, extra_buffering, port);
   }
   
   int AddPort()
@@ -1061,9 +1061,9 @@ class TensorPort
     return this->operator[](TreeBuilder(body_e));
   }
 
-  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1)
+  void AddTileLevel(int size, int shrink_granularity = 0, int granularity = 1, int extra_buffering = 0)
   {
-    target_->AddTileLevel(size, shrink_granularity, granularity, port_);
+    target_->AddTileLevel(size, shrink_granularity, granularity, extra_buffering, port_);
   }
 
   void BypassTileLevel(int granularity = 1)

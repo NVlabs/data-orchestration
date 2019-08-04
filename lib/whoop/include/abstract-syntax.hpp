@@ -648,7 +648,7 @@ class BackingBufferModel : public BufferModel
     BufferModel(0, 0, 0, nm, size, access_granularity, 1)
   {
     AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (backing memory)" + nm);
-    command_log_.Init(size, 0, false);
+    command_log_.Init(size, false);
   }
 
   virtual void Access(int addr, int requestor_idx)
@@ -719,7 +719,6 @@ class AssociativeBufferModel : public BufferModel
   std::unordered_map<int, EntryInfo> presence_info_;
   std::list<int> lru_cache_; // list occupancy should never exceed size_. Back = least recently used.
   int occupancy_ = 0;
-  int extra_buffering_ = 0;
   
   void SetRecentlyUsed(int address)
   {
@@ -731,11 +730,10 @@ class AssociativeBufferModel : public BufferModel
     }
   }
     
-  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int access_granularity, int fill_granularity) :
-    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size, access_granularity, fill_granularity), 
-    extra_buffering_(0/fill_granularity) // TODO: Add this
+  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int access_granularity, int fill_granularity, int extra_buffering) :
+    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size + extra_buffering, access_granularity, fill_granularity) 
   {
-    command_log_.Init(size_, extra_buffering_);
+    command_log_.Init(size_);
     int final_shrink_gran = shrink_granularity == 0 ? size_ : shrink_granularity;
     command_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
     shrink_pgen_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
@@ -748,7 +746,7 @@ class AssociativeBufferModel : public BufferModel
     EntryInfo victim = presence_info_[victim_addr];
 
     // We now have enough info to determine the victim's buffet slot.
-    int slot = num_evicts_ % size_; // NOTE: should take into account extra_buffering_
+    int slot = num_evicts_ % (size_);
     //T(0) << "Slot: " << slot << ", num_evicts: " << num_evicts_ << ", size:" << size_ << EndT;
     num_evicts_++;
 
