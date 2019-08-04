@@ -208,9 +208,9 @@ class BuffetCommandLog : public Log
     Log::Dump(ostr, nm, mytype);
   }
  
-  void Init(int size, int extra = 0, bool is_filled = true)
+  void Init(int size, bool is_filled = true)
   {
-    size_ = size + extra;
+    size_ = size;
     is_filled_ = is_filled;
   }
   
