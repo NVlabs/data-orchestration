@@ -63,6 +63,7 @@ class BindingTarget
 {
  public:
   inline static const std::string kUnbound = "__UNBOUND__";
+  inline static const std::string kDisabled = "__DISABLED__";
   
   std::string name_ = kUnbound;
   int idx_ = 0;
@@ -78,6 +79,8 @@ class BindingTarget
   int GetIndex() const { return idx_; }
   
   bool IsUnbound() const { return name_ == kUnbound; }
+  bool IsDisabled() const { return name_ == kDisabled; }
+  void Disable() { name_ = kDisabled; }
   std::string ToString() const { return name_ + "_" + std::to_string(idx_); }
   
   // Used by std::map
@@ -111,15 +114,17 @@ extern std::multimap<BindingTarget, std::string> physical_buffer_map;
 void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_expansions);
 void LogComputeActivity(std::ostream& ostr);
 void LogComputeTopology(std::ostream& ofile, int num_tensors);
+void DisableIdleCompute();
 void InitializeExpansions(const std::vector<int>& flattened_tile_level_spatial_expansions);
 void BindCompute(int level, int spatial_idx, const BindingTarget& target);
-void BindComputeLevel(int level, const BindingTarget& target, int expansion_factor = 1);
+//TODO: FIX void BindComputeLevel(int level, const BindingTarget& target, int expansion_factor = 1);
 BindingTarget GetDefaultBinding(int level, int spatial_idx, int expansion_factor = 1);
 std::string GetComputeBoundName(int tile_level, int dp_idx);
 void AddPhysicalComputeMap(const BindingTarget& target, const std::string& logical);
 void AddPhysicalBufferMap(const BindingTarget& target, const std::string& logical);
 void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTarget, std::string>& phsyical_map);
 int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst);
+void SetComputeWidth(int level, int spatial_idx, int granularity);
 
 namespace buff
 {
@@ -296,8 +301,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       {
         command_log_.SetModified();
       }
-      command_log_.Shrink(num_fills_ - num_shrinks_);
-      shrink_pgen_log_.Shrink(num_fills_ - num_shrinks_);
+      int remaining_lines = num_fills_ - num_shrinks_;
+      command_log_.Shrink(remaining_lines);
+      shrink_pgen_log_.Shrink(remaining_lines);
     }
   }
   
@@ -306,19 +312,24 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     if (!options::kShouldLogActivity) return;
 
     // Record accces.
-    command_log_.Read(info.is_dirty_);
-    //T(0) << "Record: " << address << ", " << command_log_.GetRelativeIndex(info.index_) << ", " << info.index_ << EndT;
-    read_pgen_log_.Send(command_log_.GetRelativeIndex(info.index_));
-    destination_pgen_log_.Send(info.receiver_mask_.to_ulong());
+    bool got_coalesced = command_log_.Read(address, info.is_dirty_);
+    if (!got_coalesced)
+    {
+      // We tell the pattern gens about this, since it wasn't coalesced.
+      //T(0) << "Record: " << address << ", " << command_log_.GetRelativeIndex(info.index_) << ", " << info.index_ << EndT;
+      read_pgen_log_.Send(command_log_.GetRelativeIndex(info.index_));
+      destination_pgen_log_.Send(info.receiver_mask_.to_ulong());
 
-    // Record any updates
-    if (info.is_dirty_) {
-      // NOTE: Update indexes are purposely absolute in the buffer.
-      update_pgen_log_.Send(info.index_);
-      // Minor hack: the datapath doesn't show up as a source.
-      // So if the mask is 0, make it 1.
-      long int final_mask = info.updater_mask_.to_ulong();
-      updaters_pgen_log_.Send(final_mask == 0 ? 1 : final_mask);
+      // Record any updates
+      if (info.is_dirty_)
+      {
+        // NOTE: Update indexes are purposely absolute in the buffer.
+        update_pgen_log_.Send(info.index_);
+        // Minor hack: the datapath doesn't show up as a source.
+        // So if the mask is 0, make it 1.
+        long int final_mask = info.updater_mask_.to_ulong();
+        updaters_pgen_log_.Send(final_mask == 0 ? 1 : final_mask);
+      }
     }
 
     // Record any shrinks (after, so as not to mess with the indexing).
@@ -336,6 +347,11 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     }
 
   }
+  
+  int AlignAddress(int addr)
+  {
+    return (addr - (addr % access_granularity_)) / access_granularity_;
+  }
 
  public:
   
@@ -350,20 +366,26 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   int ending_global_tile_level_;
   int local_spatial_idx_;
   int size_;
+  int fill_granularity_;
+  int access_granularity_;  // Expressed as even divisor of fill_granularity. e.g., fill_granularity = 6 means access granularity can be 1/2/3
   
-  BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int sz) :
+  BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int sz, int access_granularity, int fill_granularity) :
     StatsCollection(nm, &top_stats),
     TraceableBuffer(nm),
     level_(level),
     starting_global_tile_level_(starting_tile_level),
     ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
-    size_(sz)
+    size_(sz/access_granularity),
+    fill_granularity_(fill_granularity),
+    access_granularity_(access_granularity)
   {
+    SetAccessGranularity(access_granularity_);
   }
   
   void LogActivity(std::ostream& ostr)
   {
+    if (binding_.IsDisabled()) return;
     command_log_.Dump(ostr, Traceable::GetName() + "_commands", "symphony::modules::LogicalBuffet");
     ostr << "," << std::endl;
     read_pgen_log_.Dump(ostr, Traceable::GetName() + "_reads", "symphony::modules::LogicalGatedPatternGenerator");
@@ -379,27 +401,32 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void LogTopologyModule(std::ostream& ostr, int expansion_factor)
   {  
+    if (binding_.IsDisabled()) return;
     ostr << "  - type: logical_component" << std::endl;
     ostr << "    class: symphony::modules::LogicalBuffetComplex" << std::endl;
     ostr << "    base_name: " << Traceable::GetName() << std::endl;
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: true" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"size_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"size_ = " <<  size_ * access_granularity_  << "\"" << std::endl;
     ostr << "        - \"base_ = " <<  0 << "\"" << std::endl;
-    ostr << "        - \"bound_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"bound_ = " <<  size_ * access_granularity_ << "\"" << std::endl;
     ostr << "        - \"use_external_fills_ = " <<  (starting_global_tile_level_ != 0) << "\"" << std::endl;
     ostr << "        - \"use_absolute_address_mode_ = false\"" << std::endl;
     ostr << "        - \"automatically_handle_fills_ = true\"" << std::endl;
     ostr << "        - \"automatically_handle_updates_ = true\"" << std::endl;
     ostr << "        - \"shrink_requires_data_up_to_date_ = false\"" << std::endl;
+    ostr << "        - \"buffet_fill_line_size_in_bytes_ = " << fill_granularity_ * 4 << "\"" << std::endl;
+    ostr << "        - \"buffet_read_update_line_size_in_bytes_ = " << access_granularity_ * 4 << "\"" << std::endl;
     ostr << std::endl;
   }
 
   void LogTopologyConnections(std::ostream& ostr, int id, int spatial_idx, int expansion_factor)
   {
+    if (binding_.IsDisabled()) return;
     for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
     {
+      if (fronting_buffers_[dst_idx]->binding_.IsDisabled()) continue;
       // The buffer feeds another (usually smaller) buffer.
       ostr << "      - src:" << std::endl;
       ostr << "        - name: " << Traceable::GetName() << std::endl;
@@ -427,6 +454,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       for (int x = 0; x < num_dpaths; x++)
       {
         int dp_idx = spatial_idx * num_dpaths + x;
+        if (compute_bindings[tile_level][dp_idx].IsDisabled()) continue;
         ostr << "      - src:" << std::endl;
         ostr << "        - name: " << Traceable::GetName() << std::endl;
         ostr << "          port-name: read_data_out_" << fronting_buffers_.size() + local_dp_index << std::endl;
@@ -446,8 +474,10 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void LogTopologyRoutes(std::ostream& ostr, int id, int spatial_idx, int expansion_factor)
   {
+    if (binding_.IsDisabled()) return;
     for (int dst_idx = 0; dst_idx < fronting_buffers_.size(); dst_idx++)
     {
+      if (fronting_buffers_[dst_idx]->binding_.IsDisabled()) continue;
       // The buffer feeds another (usually smaller) buffer.
       // Does it go to a direct connection, or to the network?
       int phys_idx = GetPhysicalIndex(binding_, fronting_buffers_[dst_idx]->binding_);
@@ -494,6 +524,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       for (int x = 0; x < num_dpaths; x++)
       {
         int dp_idx = spatial_idx * num_dpaths + x;
+        if (compute_bindings[tile_level][dp_idx].IsDisabled()) continue;
         // Does it go to the local datapath, or to the network?
         int phys_idx = compute_bindings[tile_level][dp_idx] == binding_ ? 0 : fronting_buffers_.size();
         ostr << " - Route:" << std::endl;
@@ -533,8 +564,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void Resize(int size)
   {
-    size_ = size;
-    command_log_.Resize(size);
+    size_ = size / access_granularity_;
+    command_log_.Resize(size_);
   }
 
   int GetNumReceivers(int expansion_factor)
@@ -574,6 +605,14 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     StatsCollection::PrependToName(binding_.ToString() + "_");
     AddPhysicalBufferMap(binding_, Traceable::GetName());
   }
+  virtual void SetAccessGranularity(int g)
+  {
+    assert(g > 0);
+    ASSERT(level_ == 0 || fill_granularity_ % g == 0) << "Access granularity must be an even divisor of fill granularity. Fill: " << fill_granularity_ << ", access: " << g << EndT;
+    access_granularity_ = g;
+    command_log_.SetAccessGranularity(g);
+  }
+  
 };
 
 class BackingBufferModel : public BufferModel
@@ -605,43 +644,45 @@ class BackingBufferModel : public BufferModel
   int rowbuffer_active_idx_ = -1;
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
-  BackingBufferModel(const std::string& nm, int size) : 
-    BufferModel(0, 0, 0, nm, size)
+  BackingBufferModel(const std::string& nm, int size, int access_granularity) : 
+    BufferModel(0, 0, 0, nm, size, access_granularity, 1)
   {
     AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (backing memory)" + nm);
     command_log_.Init(size, 0, false);
   }
 
-  virtual void Access(int address, int requestor_idx)
-  {   
+  virtual void Access(int addr, int requestor_idx)
+  {
+    int address = AlignAddress(addr);
     if (CheckCoalescing(address, requestor_idx, false))
     {  
       IncrStat("Backing multicasts");
-      T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
+      T(4) << "Read (coalesced), address: " << addr << "(line_address: " << address << ") by requestor: " << requestor_idx  << EndT;
     }
     else
     {
       CheckRowBufferHit(address);
       IncrStat("Backing reads");
-      T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
+      T(4) << "Read, address: " << addr << " (line_address: " << address << ") by requestor: " << requestor_idx << EndT;
       LogAccess(address, requestor_idx, address);
       TryToDrainOldestAccesses();
     }
   }
   
-  virtual void Update(int address, int requestor_idx)
+  virtual void Update(int addr, int requestor_idx)
   {
+    int address = AlignAddress(addr);
     if (CheckCoalescing(address, requestor_idx, true))
     {  
       IncrStat("Backing multi-reduces");
-      T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx  << EndT;
+      T(4) << "Update (coalesced), address: " << addr << "(line_address: " << address << ") by requestor: " << requestor_idx  << EndT;
     }
     else
     {
       CheckRowBufferHit(address);
 
       IncrStat("Backing updates");
-      T(4) << "Update, address: " << address  << " by requestor: " << requestor_idx << EndT;
+      T(4) << "Update, address: " << addr  << " (line_address: " << address << ") by requestor: " << requestor_idx << EndT;
       LogUpdate(address, requestor_idx, address);
       TryToDrainOldestAccesses();
     }
@@ -678,8 +719,6 @@ class AssociativeBufferModel : public BufferModel
   std::unordered_map<int, EntryInfo> presence_info_;
   std::list<int> lru_cache_; // list occupancy should never exceed size_. Back = least recently used.
   int occupancy_ = 0;
-  int granularity_;
-  int buffet_size_;
   int extra_buffering_ = 0;
   
   void SetRecentlyUsed(int address)
@@ -692,34 +731,16 @@ class AssociativeBufferModel : public BufferModel
     }
   }
     
-  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int granularity) :
-    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size/granularity), 
-    granularity_(granularity), 
-    buffet_size_(size)
+  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int access_granularity, int fill_granularity) :
+    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size, access_granularity, fill_granularity), 
+    extra_buffering_(0/fill_granularity) // TODO: Add this
   {
-    command_log_.Init(size/granularity, extra_buffering_/granularity);
-    command_log_.SetShrinkGranularity(shrink_granularity == 0 ? size/granularity : shrink_granularity);
-    shrink_pgen_log_.SetShrinkGranularity(shrink_granularity == 0 ? size/granularity : shrink_granularity);
-  }
-  
-  void ModIncr(int& v)
-  {
-    if (v + 1 == size_)
-    {
-      v = 0;
-    }
-    else
-    {
-      v++;
-    }
+    command_log_.Init(size_, extra_buffering_);
+    int final_shrink_gran = shrink_granularity == 0 ? size_ : shrink_granularity;
+    command_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
+    shrink_pgen_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
   }
 
-  int ModAdd(const int& x, const int& y)
-  {
-    int res = (x + y) % size_;
-    return res;
-  }
-  
   void EvictLRU()
   {
     // Determine victim
@@ -764,18 +785,18 @@ class AssociativeBufferModel : public BufferModel
     // the actual address
   virtual void Access(int addr, int requestor_idx)
   {
-    int address = addr - (addr % granularity_);
+    int address = AlignAddress(addr);
     
     if (CheckCoalescing(address, requestor_idx, false))
     {
       IncrStat("L" + std::to_string(level_) + " multicasts");
-      T(4) << "Read (coalesced), address: " << address << " by requestor: " << requestor_idx << EndT;
+      T(4) << "Read (coalesced), address: " << addr << "(line_address: " << address << ") by requestor: " << requestor_idx << EndT;
       SetRecentlyUsed(address);
       return;
     }
     
     IncrStat("L" + std::to_string(level_) + " reads");
-    T(4) << "Read, address: " << address << " by requestor: " << requestor_idx << EndT;
+    T(4) << "Read, address: " << addr << "(line_address: " << address << ") by requestor: " << requestor_idx << EndT;
 
     bool found        = false;
     bool caused_evict = false;
@@ -813,18 +834,18 @@ class AssociativeBufferModel : public BufferModel
   // the actual address
   virtual void Update(int addr, int requestor_idx)
   {
-    int address = addr - (addr % granularity_);
+    int address = AlignAddress(addr);
 
     if (CheckCoalescing(address, requestor_idx, true))
     {
       IncrStat("L" + std::to_string(level_) + " multi-reduces");
-      T(4) << "Update (coalesced), address: " << address << " by requestor: " << requestor_idx << EndT;
+      T(4) << "Update (coalesced), address: " << addr << "(line_address: " << address << ") by requestor: " << requestor_idx << EndT;
       presence_info_[address].modified_ = true;
       return;
     }
     
     IncrStat("L" + std::to_string(level_) + " updates");
-    T(4) << "Update, address: " << address << " by requestor: " << requestor_idx << EndT;
+    T(4) << "Update, address: " << addr << "(line address: " << address << ") by requestor: " << requestor_idx << EndT;
 
     bool found        = false;
     bool caused_evict = false;
@@ -1846,7 +1867,6 @@ class TensorAssignment : public Statement
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
     target_.Update(vidxs, res, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
-    // TODO: Capture multicasting to datapaths.
     compute_logs[compute_level_][ctx.CurrentSpatialPartition()]->LogOutputTensor(1 << target_.id_);
     T(4) << "Done: tensor assignment." << EndT;
     return Statement::Execute(ctx);

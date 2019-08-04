@@ -94,7 +94,12 @@ void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_
   {
     for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
     {
-      if (compute_bindings[tile_level][local_index].IsUnbound())
+      if (compute_bindings[tile_level][local_index].IsDisabled())
+      {
+        // Disable the log. TODO: remove the logical element entirely.
+        compute_logs[tile_level][local_index]->enabled_ = false;
+      }
+      else if (compute_bindings[tile_level][local_index].IsUnbound())
       {
         BindCompute(tile_level, local_index, GetDefaultBinding(tile_level, local_index, compute_logs[tile_level].size()));
       }
@@ -102,20 +107,48 @@ void InitializeComputeLogs(const std::vector<int>& flattened_tile_level_spatial_
   }
 }
 
-void LogComputeActivity(std::ostream& ostr)
+void DisableIdleCompute()
 {
   for (int tile_level = 0; tile_level < compute_logs.size(); tile_level++)
   {
     for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
     {
-      compute_logs[tile_level][local_index]->Dump(ostr, GetComputeBoundName(tile_level, local_index), "symphony::modules::ComputeEngineComplex");
+      if (compute_logs[tile_level][local_index]->idle_ ||
+          !compute_logs[tile_level][local_index]->enabled_)
+      {
+        std::string bound_name = GetComputeBoundName(tile_level, local_index);
+        auto it = physical_compute_map.begin();
+        for ( ; it != physical_compute_map.end(); it++)
+        {
+          // Assert we will only find it once.
+          if ((*it).second == bound_name) break;
+        }
+        if (it != physical_compute_map.end())
+        {
+          physical_compute_map.erase(it);
+        }
+        compute_bindings[tile_level][local_index].Disable();
+      }
+    }
+  }
+}
 
-      if (!(tile_level == compute_logs.size() - 1 &&
-            local_index == compute_logs[tile_level].size() - 1))
+
+void LogComputeActivity(std::ostream& ostr)
+{
+  bool need_comma = false;
+  for (int tile_level = 0; tile_level < compute_logs.size(); tile_level++)
+  {
+    for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
+    {
+      if (compute_bindings[tile_level][local_index].IsDisabled()) continue;
+      if (need_comma)
       {
         ostr << ",";
       }
       ostr << std::endl;
+      compute_logs[tile_level][local_index]->Dump(ostr, GetComputeBoundName(tile_level, local_index), "symphony::modules::ComputeEngineComplex");
+      need_comma = true;
     }
   }
 }
@@ -126,6 +159,7 @@ void LogComputeTopology(std::ostream& ofile, int num_tensors)
   {
     for (int local_index = 0; local_index < compute_logs[tile_level].size(); local_index++)
     {
+      if (compute_bindings[tile_level][local_index].IsDisabled()) continue;
       ofile << "  - type: module" << std::endl;
       ofile << "    class: symphony::modules::ComputeEngineComplex" << std::endl;
       ofile << "    base_name: " << GetComputeBoundName(tile_level, local_index) << std::endl;
@@ -155,6 +189,18 @@ void BindCompute(int level, int spatial_idx, const BindingTarget& target)
   AddPhysicalComputeMap(target, GetComputeBoundName(level, spatial_idx));
 }
 
+void SetComputeWidth(int level, int spatial_idx, int granularity)
+{
+  BindingTarget dis;
+  dis.Disable();
+  // Disable all compute logs except 0
+  for (int x = 1; x < granularity; x++)
+  {
+    BindCompute(level, spatial_idx + x, dis);
+  }
+}
+
+/* TODO: FIX THIS
 void BindComputeLevel(int level, const BindingTarget& target, int expansion_factor)
 {
   int logical_level_size = compute_bindings.at(level).size();
@@ -173,6 +219,7 @@ void BindComputeLevel(int level, const BindingTarget& target, int expansion_fact
     }
   }
 }
+*/
 
 
 BindingTarget GetDefaultBinding(int level, int spatial_idx, int expansion_factor)
@@ -205,8 +252,10 @@ void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTa
 {
   std::string old_phys_name;
   int binding_id = 0;
+  bool need_epilogue = false;
   for (auto phys_it = physical_map.begin(); phys_it != physical_map.end(); phys_it++)
   {
+    if ((*phys_it).first.IsDisabled()) continue;
     std::string phys_nm = (*phys_it).first.ToString();
     std::string phys_class;
     if (is_compute)
@@ -219,14 +268,25 @@ void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTa
       phys_nm += "-BCC";
       phys_class = "symphony::modules::BuffetComplexCollection";
     }
-    if (phys_nm != old_phys_name)
+    if (phys_nm == old_phys_name)
     {
+      ostr << "," << std::endl;
+    }
+    else
+    {
+      if (need_epilogue)
+      {
+        ostr << std::endl;
+        ostr << "  ]" << std::endl;
+        ostr << " }," << std::endl;
+      }
       ostr << " {" << std::endl;
       ostr << "  \"Name\":\"" << phys_nm << "\"," << std::endl;
       ostr << "  \"Class\":\"" << phys_class << "\"," << std::endl; 
       ostr << "  \"Commands\":[" << std::endl;
       binding_id = 0;
       old_phys_name = phys_nm;
+      need_epilogue = true;
     }
     ostr << "    {" << std::endl;
     ostr << "    \"Action\":\"ComponentCollectionCreateComponentAction\"," << std::endl;
@@ -235,23 +295,12 @@ void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTa
     ostr << "                \"name_\": \"" << (*phys_it).second << "\"" << std::endl;
     ostr << "              }" << std::endl;
     ostr << "    }";
-    if (binding_id != physical_map.count((*phys_it).first) - 1)
-    {
-     ostr << "," << std::endl;
-    }
-    else
-    {
-      ostr << std::endl;
-      ostr << "  ]" << std::endl;
-      ostr << " }";
-      if (phys_it != std::prev(physical_map.end()))
-      {
-        ostr << ",";
-      }
-      ostr << std::endl;
-    }
     binding_id++;
   }
+  // Final epilogue
+  ostr << std::endl;
+  ostr << "  ]" << std::endl;
+  ostr << " }" << std::endl;
 }
 
 int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst)
