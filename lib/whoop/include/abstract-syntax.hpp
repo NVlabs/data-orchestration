@@ -418,6 +418,10 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "        - \"shrink_requires_data_up_to_date_ = false\"" << std::endl;
     ostr << "        - \"buffet_fill_line_size_in_bytes_ = " << fill_granularity_ * 4 << "\"" << std::endl;
     ostr << "        - \"buffet_read_update_line_size_in_bytes_ = " << access_granularity_ * 4 << "\"" << std::endl;
+    if (binding_.GetLevel() == 0)
+    {
+      ostr << "        - \"use_memory_interface_ = true\"" << std::endl;
+    }
     ostr << std::endl;
   }
 
