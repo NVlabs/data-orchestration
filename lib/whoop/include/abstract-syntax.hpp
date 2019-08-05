@@ -596,6 +596,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
  
   virtual void Access(int address, int requestor_idx) = 0;
   virtual void Update(int address, int requestor_idx) = 0;
+  virtual bool DrainOne() = 0;
   virtual void DrainAll() = 0;
   virtual void FlushBuffet() = 0;
   virtual void FixupLevelNumbering(int final_num_levels) = 0;
@@ -694,6 +695,10 @@ class BackingBufferModel : public BufferModel
 
   virtual void FlushBuffet()
   {
+  }
+  virtual bool DrainOne()
+  {
+    return true;
   }
   virtual void DrainAll()
   {
@@ -881,6 +886,15 @@ class AssociativeBufferModel : public BufferModel
     }
     presence_info_[address].accesses_.push_back(LogUpdate(address, requestor_idx));
     command_log_.SetModified();
+  }
+
+  virtual bool DrainOne()
+  {
+    if (occupancy_ != 0)
+    {
+      EvictLRU();
+    }
+    return (occupancy_ == 0);
   }
 
   virtual void DrainAll()
@@ -1252,9 +1266,20 @@ class PrimTensor : public StatsCollection
       // Skip level 0 since it is the same backing for each port and handled specially
       for (auto level_rit = (*port_rit)->rbegin(); level_rit != std::prev((*port_rit)->rend()); level_rit++)
       {
+        // yuhsinc: at each level, evict 1 entry from each buffet at a time in a round robin fashion
+        bool all_empty = false;
+        while (!all_empty)
+        {
+          all_empty = true;
+          for (auto buf : *(*level_rit))
+          {
+            all_empty &= buf->DrainOne();
+          }
+        }
+        // Clean out the logs and any final activity.
         for (auto buf : *(*level_rit))
         {
-          buf->DrainAll();
+           buf->DrainAll();
         }
       }
     }
