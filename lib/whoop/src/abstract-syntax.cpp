@@ -318,6 +318,24 @@ int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst)
   }
 }
 
+bool HaveDirectRoute(const BindingTarget& src, const BindingTarget& dst)
+{
+  return (src.GetLevel() + 1 == dst.GetLevel()) || 
+         (dst.GetLevel() + 1 == src.GetLevel());
+}
+
+int GetSwitchAddress(const BindingTarget& src)
+{
+  int level = src.GetLevel();
+  int result = 0;
+  for (int x = 0; x < level; x++)
+  {
+    result += default_bindings[x].GetIndex();
+  }
+  return result;
+}
+
+
 namespace buff
 {
 int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int num_spatial_partitions )

@@ -839,8 +839,6 @@ class Tensor : public ast::PrimTensor
 
   void BypassTileLevel(int granularity = 1, int extra_buffering = 0, int port = 0)
   {
-    // TODO: This should be a No-Op
-    AddTileLevel(granularity, granularity, granularity, extra_buffering, port);
   }
   
   int AddPort()
