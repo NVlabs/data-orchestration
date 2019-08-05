@@ -28,7 +28,7 @@
 # Stop on errors
 set -e
 # build the executable
-scons -u -Q debug=1
+scons -u -Q
 
 executable=./conv1d-untiled-output-stationary.bin
 #executable="gdb --args ./conv1d-untiled-output-stationary.bin"
