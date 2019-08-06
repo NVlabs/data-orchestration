@@ -350,7 +350,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   
   int AlignAddress(int addr)
   {
-    return (addr - (addr % access_granularity_)) / access_granularity_;
+    return (addr - (addr % access_granularity_));
   }
 
  public:
@@ -408,9 +408,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: true" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"size_ = " <<  size_ * access_granularity_  << "\"" << std::endl;
+    ostr << "        - \"size_ = " <<  size_ << "\"" << std::endl;
     ostr << "        - \"base_ = " <<  0 << "\"" << std::endl;
-    ostr << "        - \"bound_ = " <<  size_ * access_granularity_ << "\"" << std::endl;
+    ostr << "        - \"bound_ = " <<  size_ << "\"" << std::endl;
     ostr << "        - \"use_external_fills_ = " <<  (starting_global_tile_level_ != 0) << "\"" << std::endl;
     ostr << "        - \"use_absolute_address_mode_ = false\"" << std::endl;
     ostr << "        - \"automatically_handle_fills_ = true\"" << std::endl;
@@ -650,7 +650,7 @@ class BackingBufferModel : public BufferModel
   int rowbuffer_width_ = 16; //This is a default value; users can modify it via "rowbuffer_width_(name)" option
   
   BackingBufferModel(const std::string& nm, int size, int access_granularity) : 
-    BufferModel(0, 0, 0, nm, size, access_granularity, 1)
+    BufferModel(0, 0, 0, nm, size, access_granularity, access_granularity)
   {
     AddOption(&rowbuffer_width_, "rowbuffer_width_" + nm, "The width of row buffer in DRAM (backing memory)" + nm);
     command_log_.Init(size, false);
@@ -658,7 +658,7 @@ class BackingBufferModel : public BufferModel
 
   virtual void Access(int addr, int requestor_idx)
   {
-    int address = AlignAddress(addr);
+    int address = AlignAddress(addr) / access_granularity_;
     if (CheckCoalescing(address, requestor_idx, false))
     {  
       IncrStat("Backing multicasts");
@@ -676,7 +676,7 @@ class BackingBufferModel : public BufferModel
   
   virtual void Update(int addr, int requestor_idx)
   {
-    int address = AlignAddress(addr);
+    int address = AlignAddress(addr) / access_granularity_;
     if (CheckCoalescing(address, requestor_idx, true))
     {  
       IncrStat("Backing multi-reduces");
