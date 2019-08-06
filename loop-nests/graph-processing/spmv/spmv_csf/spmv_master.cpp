@@ -197,7 +197,7 @@ int main(int argc, char** argv)
     // Set up the graph algorithm 
     /******************************************************/
     FORMAT_TYPE formatIn = (FORMAT_TYPE) ARG_COMPRESSION_FORMAT;
-    GraphAlgorithm graphAlg( &SegmentArray, &SrcCoords, NULL );
+    GraphAlgorithm graphAlg( formatIn, &SegmentArray, &SrcCoords, NULL );
 
     /******************************************************/
     /******************************************************/
@@ -400,6 +400,22 @@ int main(int argc, char** argv)
 
         graphAlg.PageRankNibble_Untiled_Compressed_Parallel( seed );
         graphAlg.Whoop_PageRankNibble_Untiled_Compressed_Parallel(seed, ARG_RF_BUFFET_SIZE_KB, ARG_L1_BUFFET_SIZE_KB, ARG_L2_BUFFET_SIZE_KB, formatIn);
+    }    
+    else if( ARG_RUN_MODE == MODE_UNTILED_COMPRESSED_PARALLEL_TILED_LGC_NIBBLE )
+    {
+        int seed = ARG_USE_SEED;
+
+        // Determine Tile Sizes Using On-Chip Buffer Sizes
+        CreateBufferBasedTileSizes( V, S0, D0, S1, D1, S2, D2 );
+
+        // Print Setup Information
+        PrintInfo( graphAlg );
+
+        // Print Tile Info
+        PrintTileInfo( {S0,D0,S1,D1,S2,D2} );
+
+        graphAlg.PageRankNibble_Untiled_Compressed_Parallel_Tiled( seed );
+        graphAlg.Whoop_PageRankNibble_Untiled_Compressed_Parallel_Tiled(seed, ARG_RF_BUFFET_SIZE_KB, ARG_L1_BUFFET_SIZE_KB, ARG_L2_BUFFET_SIZE_KB, formatIn);
     }    
     else 
     {
