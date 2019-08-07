@@ -815,8 +815,14 @@ class Tensor : public ast::PrimTensor
       }
       // My fill granularity is the previous guy's read granularity.
       int fill_granularity = (*backing_it)->access_granularity_;
+      // Round my total size to be a multiple of fill
+      int final_size = size + extra_buffering;
+      if (final_size % fill_granularity != 0)
+      {
+        final_size += fill_granularity - (final_size % fill_granularity);
+      }
       int local_idx = (*backing_it)->fronting_buffers_.size();
-      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(size, level, current_global_tile_level, local_idx, nm, shrink_granularity, access_granularity, fill_granularity, extra_buffering));
+      std::shared_ptr<buff::BufferModel> new_buff(new buff::AssociativeBufferModel(final_size, level, current_global_tile_level, local_idx, nm, shrink_granularity, access_granularity, fill_granularity));
       (*new_buffs)[x] = new_buff;
       (*new_buffs)[x]->backing_buffer_ = *backing_it;
       (*backing_it)->fronting_buffers_.push_back(new_buff);

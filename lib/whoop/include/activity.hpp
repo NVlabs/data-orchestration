@@ -153,8 +153,7 @@ class PatternGeneratorLog : public Log
 class ShrinkPatternGeneratorLog : public Log
 {
   int shrinks_ = 0;
-  int shrink_granularity_ = 1;
-  int fill_granularity_ = 1;
+  int shrink_threshold_ = 1;
 
  public:
   void EmitShrink(int num)
@@ -171,27 +170,26 @@ class ShrinkPatternGeneratorLog : public Log
   {
     if (!options::kShouldLogActivity) return;
     shrinks_ += num;
-    if (shrinks_ >= shrink_granularity_)
+    if (shrinks_ >= shrink_threshold_)
     {
-      EmitShrink(shrinks_ / fill_granularity_);
+      EmitShrink(shrinks_);
       shrinks_ = 0;
     }
   }
   
-  void SetShrinkGranularity(int g, int fill_gran)
+  void SetShrinkThreshold(int t)
   {
-    shrink_granularity_ = g * fill_gran;
-    fill_granularity_ = fill_gran;
+    shrink_threshold_ = t;
   }
 };
 
 class BuffetCommandLog : public Log
 {
   int shrinks_ = 0;
-  int shrink_granularity_ = 1;
+  int shrink_threshold_ = 1;
   int last_idx_ = -1;
   int num_coalesces_ = 0;
-  int access_granularity_ = 1;
+  int access_threshold_ = 1;
   bool modified_ = false;
   int head_ = 0;
   int size_ = 0;
@@ -225,7 +223,7 @@ class BuffetCommandLog : public Log
     if (idx == last_idx_)
     {
       num_coalesces_++;
-      if (num_coalesces_ != access_granularity_)
+      if (num_coalesces_ != access_threshold_)
       {
         return true;
       }
@@ -261,11 +259,11 @@ class BuffetCommandLog : public Log
   {
     if (!options::kShouldLogActivity) return;
     shrinks_ += num;
-    if (shrinks_ >= shrink_granularity_)
+    if (shrinks_ >= shrink_threshold_)
     {
       shrinks_ = 0;
       EmitShrink();
-      head_ += shrink_granularity_;
+      head_ += shrink_threshold_;
       if (head_ > size_)
       {
         head_ -= size_;
@@ -273,16 +271,16 @@ class BuffetCommandLog : public Log
     }
   }
   
-  void SetShrinkGranularity(int g, int fill_gran)
+  void SetShrinkThreshold(int t)
   {
-    assert(g > 0);
-    shrink_granularity_ = g * fill_gran;
+    assert(t > 0);
+    shrink_threshold_ = t;
   }
 
-  void SetAccessGranularity(int g)
+  void SetAccessThreshold(int t)
   {
-    assert(g > 0);
-    access_granularity_ = g;
+    assert(t > 0);
+    access_threshold_ = t;
   }
   
   void SetModified()

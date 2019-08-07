@@ -350,7 +350,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   
   int AlignAddress(int addr)
   {
-    return (addr - (addr % access_granularity_));
+    return (addr - (addr % fill_granularity_));
   }
 
  public:
@@ -376,7 +376,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     starting_global_tile_level_(starting_tile_level),
     ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
-    size_(sz/access_granularity),
+    size_(sz/fill_granularity),
     fill_granularity_(fill_granularity),
     access_granularity_(access_granularity)
   {
@@ -408,9 +408,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: true" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"size_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"size_ = " <<  size_ * (fill_granularity_ / access_granularity_) << "\"" << std::endl;
     ostr << "        - \"base_ = " <<  0 << "\"" << std::endl;
-    ostr << "        - \"bound_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"bound_ = " <<  size_ * (fill_granularity_ / access_granularity_) << "\"" << std::endl;
     ostr << "        - \"use_external_fills_ = " <<  (starting_global_tile_level_ != 0) << "\"" << std::endl;
     ostr << "        - \"use_absolute_address_mode_ = false\"" << std::endl;
     ostr << "        - \"automatically_handle_fills_ = true\"" << std::endl;
@@ -529,6 +529,13 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       {
         int dp_idx = spatial_idx * num_dpaths + x;
         if (compute_bindings[tile_level][dp_idx].IsDisabled()) continue;
+        BindingTarget dst_binding = compute_bindings[tile_level][dp_idx];
+        ASSERT_WARNING(binding_.GetLevel() == dst_binding.GetLevel()) << "Attempted route to non-local CECC. Logical Src: " << Traceable::GetName() << ", Physical Src: " << binding_.ToString() << ", Logical Dst: " << GetComputeBoundName(tile_level, dp_idx) << ", Physical Dst: " << dst_binding.ToString() << ". YAML may be incorrect." << EndT;
+        if (binding_.GetLevel() != dst_binding.GetLevel())
+        {
+          local_dp_index++;
+          continue;
+        }
         // Does it go to the local datapath, or to the network?
         int phys_idx = compute_bindings[tile_level][dp_idx] == binding_ ? 0 : fronting_buffers_.size();
         ostr << " - Route:" << std::endl;
@@ -568,7 +575,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void Resize(int size)
   {
-    size_ = size / access_granularity_;
+    size_ = size / fill_granularity_;
     command_log_.Resize(size_);
   }
 
@@ -615,7 +622,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     assert(g > 0);
     ASSERT(level_ == 0 || fill_granularity_ % g == 0) << "Access granularity must be an even divisor of fill granularity. Fill: " << fill_granularity_ << ", access: " << g << EndT;
     access_granularity_ = g;
-    command_log_.SetAccessGranularity(g);
+    command_log_.SetAccessThreshold(fill_granularity_ /  access_granularity_);
   }
   
 };
@@ -658,7 +665,7 @@ class BackingBufferModel : public BufferModel
 
   virtual void Access(int addr, int requestor_idx)
   {
-    int address = AlignAddress(addr) / access_granularity_;
+    int address = AlignAddress(addr);
     if (CheckCoalescing(address, requestor_idx, false))
     {  
       IncrStat("Backing multicasts");
@@ -676,7 +683,7 @@ class BackingBufferModel : public BufferModel
   
   virtual void Update(int addr, int requestor_idx)
   {
-    int address = AlignAddress(addr) / access_granularity_;
+    int address = AlignAddress(addr);
     if (CheckCoalescing(address, requestor_idx, true))
     {  
       IncrStat("Backing multi-reduces");
@@ -739,13 +746,13 @@ class AssociativeBufferModel : public BufferModel
     }
   }
     
-  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int access_granularity, int fill_granularity, int extra_buffering) :
-    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size + extra_buffering, access_granularity, fill_granularity) 
+  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_threshold, int access_granularity, int fill_granularity) :
+    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size, access_granularity, fill_granularity) 
   {
     command_log_.Init(size_);
-    int final_shrink_gran = shrink_granularity == 0 ? size_ : shrink_granularity;
-    command_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
-    shrink_pgen_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
+    int final_shrink_thresh = shrink_threshold == 0 ? size_ : shrink_threshold/fill_granularity;
+    command_log_.SetShrinkThreshold(final_shrink_thresh);
+    shrink_pgen_log_.SetShrinkThreshold(final_shrink_thresh);
   }
 
   void EvictLRU()
@@ -755,7 +762,7 @@ class AssociativeBufferModel : public BufferModel
     EntryInfo victim = presence_info_[victim_addr];
 
     // We now have enough info to determine the victim's buffet slot.
-    int slot = num_evicts_ % (size_);
+    int slot = num_evicts_ % size_;
     //T(0) << "Slot: " << slot << ", num_evicts: " << num_evicts_ << ", size:" << size_ << EndT;
     num_evicts_++;
 
