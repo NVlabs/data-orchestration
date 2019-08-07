@@ -39,6 +39,7 @@ subdirs = ['conv1d',
            'pagerank-nibble-multiseed',
            'convnet',
            'graphsage',
+           'sinkhorn-wmd',
            'recsys']
 
 disabled = []
