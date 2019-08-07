@@ -619,10 +619,13 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   }
   virtual void SetAccessGranularity(int g)
   {
-    assert(g > 0);
     ASSERT(level_ == 0 || fill_granularity_ % g == 0) << "Access granularity must be an even divisor of fill granularity. Fill: " << fill_granularity_ << ", access: " << g << EndT;
     access_granularity_ = g;
-    command_log_.SetAccessThreshold(fill_granularity_ /  access_granularity_);
+    if (level_ == 0)
+    {
+      fill_granularity_ = access_granularity_;
+    }
+    command_log_.SetAccessThreshold(fill_granularity_ / access_granularity_);
   }
   
 };
