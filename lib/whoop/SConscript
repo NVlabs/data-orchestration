@@ -26,6 +26,11 @@
 
 Import('env')
 
+use_double = ARGUMENTS.get('use_double', 0)
+
+if int(use_double):
+  env.Append(CCFLAGS = '-DUSE_DOUBLE=1')
+
 env2 = env.Clone()
 env2.Append(CPPFLAGS = ['-fpermissive'])
 env2.Append(CPPPATH = ['#lib/whoop/include'])

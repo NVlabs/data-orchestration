@@ -54,7 +54,7 @@
 #include "pure-abstract-syntax-types.hpp"
 #include "pure-abstract-syntax.hpp"
 
-typedef unsigned long UINT64;
+#include "typedefs.hpp"
 
 namespace whoop
 {
@@ -956,7 +956,7 @@ class PrimVar : public StatsCollection
 {
  public:
   
-  std::vector<int> vals_;
+  std::vector<DataType_t> vals_;
   
   PrimVar() = default;
 
@@ -977,7 +977,7 @@ class PrimVar : public StatsCollection
     vals_.resize(flattened_num_partitions, 0xAAAAAAAA);
   }
   
-  void Update(const int& flat_base, const int& flat_bound, const int& new_val)
+  void Update(const int& flat_base, const int& flat_bound, const DataType_t& new_val)
   {
     IncrStat("Var updates");
     for (int x = flat_base; x < flat_bound; x++)
@@ -986,10 +986,10 @@ class PrimVar : public StatsCollection
     }
   }
   
-  int Access(const int& flat_base, const int& flat_bound)
+  DataType_t Access(const int& flat_base, const int& flat_bound)
   {
     IncrStat("Var reads");
-    int result = vals_[flat_base];
+    DataType_t result = vals_[flat_base];
     for (int x = flat_base; x < flat_bound; x++)
     {
       assert(result == vals_[x]);
@@ -1075,7 +1075,7 @@ class PrimTensor : public StatsCollection
  public:
   
   std::vector<int> dim_sizes_; // 0 == innermost, N-1 == outermost
-  std::vector<int> vals_;
+  std::vector<DataType_t> vals_;
   // A global id for this tensor in the list of all tensors.
   int id_;
   // The following information is important both for optimizations
@@ -1111,7 +1111,7 @@ class PrimTensor : public StatsCollection
   {
   }
 
-  void FillVal( int fill_val_ )
+  void FillVal( DataType_t fill_val_ )
   {
     std::fill(vals_.begin(), vals_.end(), fill_val_);
   }
@@ -1136,7 +1136,7 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const DataType_t& new_val, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
@@ -1153,7 +1153,7 @@ class PrimTensor : public StatsCollection
     buffer_to_access->Update(idx, my_final_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
+  DataType_t Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
     int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );      
     int num_buffers = (*buffer_levels_[port_idx])[access_tile_level]->size();
@@ -1168,24 +1168,24 @@ class PrimTensor : public StatsCollection
     return vals_[idx];
   }
 
-  int& At(const std::vector<int>& idxs)
+  DataType_t& At(const std::vector<int>& idxs)
   {
     UINT64 idx = FlattenIndices(idxs);
     return vals_[idx];
   }
 
-  const int& At(const std::vector<int>& idxs) const
+  const DataType_t& At(const std::vector<int>& idxs) const
   {
     UINT64 idx = FlattenIndices(idxs);
     return vals_[idx];
   }
   
-  int& PrimAt(const int& idx)
+  DataType_t& PrimAt(const int& idx)
   {
     return vals_[idx];
   }
 
-  const int& PrimAt(const int& idx) const
+  const DataType_t& PrimAt(const int& idx) const
   {
     return vals_[idx];
   }
@@ -1516,7 +1516,7 @@ class Expression : public ExecTraceable
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return 0;
   }
@@ -1541,7 +1541,7 @@ class VarAccess : public Expression
     return expr;
   }
   
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return target_.Access(ctx.FlatBegin(), ctx.FlatEnd());
   }
@@ -1576,7 +1576,7 @@ class TensorAccess : public Expression
     return converted_expr;
   }
   
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
@@ -1591,9 +1591,9 @@ class BinaryOp : public Expression
  public:
   Expression* src1_;
   Expression* src2_;
-  int (*op_)(const int& s1, const int& s2);
+  DataType_t (*op_)(const DataType_t& s1, const DataType_t& s2);
   
-  BinaryOp(int (*o)(const int& s1, const int& s2), Expression* s1, Expression* s2) :
+  BinaryOp(DataType_t (*o)(const DataType_t& s1, const DataType_t& s2), Expression* s1, Expression* s2) :
     src1_(s1), src2_(s2), op_(o)
   {
   }
@@ -1639,10 +1639,10 @@ class BinaryOp : public Expression
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
-    int v1 = src1_->Evaluate(ctx);
-    int v2 = src2_->Evaluate(ctx);
+    DataType_t v1 = src1_->Evaluate(ctx);
+    DataType_t v2 = src2_->Evaluate(ctx);
     return op_(v1, v2);
   }
 };
@@ -1652,9 +1652,9 @@ class UnaryOp : public Expression
 {
  public:
   Expression* src1_;
-  int (*op_)(const int& s);
+  DataType_t (*op_)(const DataType_t& s);
 
-  UnaryOp(int (*o)(const int& s1), Expression* s1) :
+  UnaryOp(DataType_t (*o)(const DataType_t& s1), Expression* s1) :
     src1_(s1), op_(o)
   {
   }
@@ -1675,9 +1675,9 @@ class UnaryOp : public Expression
     return expr;    
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
-    int v1 = src1_->Evaluate(ctx);
+    DataType_t v1 = src1_->Evaluate(ctx);
     return op_(v1);
   }
 };
@@ -1686,9 +1686,9 @@ class UnaryOp : public Expression
 class Constant : public Expression
 {
  public:
-  const int val_;
+  const DataType_t val_;
   
-  Constant(const int& v) : val_(v) {}
+  Constant(const DataType_t& v) : val_(v) {}
 
   virtual std::shared_ptr<timewhoop::Expression> ConvertExpression()
   {
@@ -1696,7 +1696,7 @@ class Constant : public Expression
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return val_;
   }
@@ -1841,7 +1841,7 @@ class VarAssignment : public Statement
     T(4) << "Entering: variable assignment." << EndT;
     if (body_)
     {
-      int res = body_->Evaluate(ctx);
+      DataType_t res = body_->Evaluate(ctx);
       T(3) << "Updating variable " << target_.name_ << " value to: " << res << " (partitions: " << ctx.FlatBegin() <<  ".." << ctx.FlatEnd() - 1 << ")" << EndT;
       target_.Update(ctx.FlatBegin(), ctx.FlatEnd(), res);
     }
@@ -1905,7 +1905,7 @@ class TensorAssignment : public Statement
   {
     T(4) << "Entering: tensor assignment." << EndT;
     auto idxs = EvaluateAll(idx_exprs_, ctx);
-    int res = body_->Evaluate(ctx);
+    DataType_t res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
     target_.Update(vidxs, res, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
@@ -2302,7 +2302,7 @@ class If : public Statement
 
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-  
+
     if (CurrentIsPaused(ctx))
     {
       T(4) << "Bypassing: dynamic if." << EndT;
@@ -2316,7 +2316,7 @@ class If : public Statement
     else
     {
       T(4) << "Entering: dynamic if." << EndT;
-      int res = test_expr_->Evaluate(ctx);
+      DataType_t res = test_expr_->Evaluate(ctx);
 
       if (res)
       {

@@ -63,7 +63,7 @@ class TreeBuilder;
 #define WHOOP_DECLARE_BINARY_OPERATOR(OP, RET) \
   RET operator OP(TreeBuilder body_e); \
   RET operator OP(ast::PrimVar& v2); \
-  RET operator OP(const int& c); \
+  RET operator OP(const DataType_t& c); \
   RET operator OP(const TensorDisambiguator& v); \
 
 #define WHOOP_DECLARE_STMT_UNARY_OPERATOR(OP) \
@@ -79,9 +79,9 @@ class TreeBuilder;
   WHOOP_DECLARE_BINARY_OPERATOR(OP, TreeBuilder)
 
 #define WHOOP_DECLARE_CONST_BINARY_OPERATOR(OP, RET) \
-  RET operator OP(const int& c, TreeBuilder body_e); \
-  RET operator OP(const int& c, ast::PrimVar& body_e); \
-  RET operator OP(const int& c, TensorDisambiguator& v); \
+  RET operator OP(const DataType_t& c, TreeBuilder body_e); \
+  RET operator OP(const DataType_t& c, ast::PrimVar& body_e); \
+  RET operator OP(const DataType_t& c, TensorDisambiguator& v); \
 
 #define WHOOP_DECLARE_CONST_STMT_BINARY_OPERATOR(OP) \
   WHOOP_DECLARE_CONST_BINARY_OPERATOR(OP, void)
@@ -100,7 +100,7 @@ class TreeBuilder;
     ast::VarAccess* body_e = new ast::VarAccess(v2); \
     this->operator OP(TreeBuilder(body_e)); \
   } \
-  void Container::operator OP(const int& c) \
+  void Container::operator OP(const DataType_t& c) \
   { \
     ast::Constant* body_e = new ast::Constant(c); \
     this->operator OP(TreeBuilder(body_e)); \
@@ -123,7 +123,7 @@ class TreeBuilder;
     ast::VarAccess* body_e = new ast::VarAccess(v2); \
     this->operator =(TreeBuilder(body_e)); \
   } \
-  void CLASSNAME::operator =(const int& c) \
+  void CLASSNAME::operator =(const DataType_t& c) \
   { \
     ast::Constant* body_e = new ast::Constant(c); \
     this->operator =(TreeBuilder(body_e)); \
@@ -145,7 +145,7 @@ class TreeBuilder;
     ast::VarAccess* body_e = new ast::VarAccess(v2); \
     return this->operator OP(TreeBuilder(body_e)); \
   } \
-  TreeBuilder Container::operator OP(const int& c) \
+  TreeBuilder Container::operator OP(const DataType_t& c) \
   { \
     ast::Constant* body_e = new ast::Constant(c); \
     return this->operator OP(TreeBuilder(body_e)); \
@@ -158,17 +158,17 @@ class TreeBuilder;
 
 
 #define WHOOP_DEFINE_CONST_STMT_BINARY_OPERATOR(OP, CONVERSION_OP) \
-  void operator OP(const int& c, TreeBuilder body_e) \
+  void operator OP(const DataType_t& c, TreeBuilder body_e) \
   { \
     ast::Statement* assign_stmt = CONVERSION_OP; \
     the_program.Add(assign_stmt); \
   } \
-  void operator OP(const int& c, ast::PrimVar& v2) \
+  void operator OP(const DataType_t& c, ast::PrimVar& v2) \
   { \
     ast::VarAccess* body_e = new ast::VarAccess(v2); \
     operator OP(c, TreeBuilder(body_e)); \
   } \
-  void operator OP(const int& c, const TensorDisambiguator& v) \
+  void operator OP(const DataType_t& c, const TensorDisambiguator& v) \
   { \
     ast::TensorAccess* body_e = v.ToTensorAccess(); \
     operator OP(c, TreeBuilder(body_e)); \
@@ -176,17 +176,17 @@ class TreeBuilder;
 
 
 #define WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(OP, CONVERSION_OP) \
-  TreeBuilder operator OP(const int& c, TreeBuilder body_e) \
+  TreeBuilder operator OP(const DataType_t& c, TreeBuilder body_e) \
   { \
     TreeBuilder expr(CONVERSION_OP); \
     return expr; \
   } \
-  TreeBuilder operator OP(const int& c, ast::PrimVar& v2) \
+  TreeBuilder operator OP(const DataType_t& c, ast::PrimVar& v2) \
   { \
     ast::VarAccess* body_e = new ast::VarAccess(v2); \
     return operator OP(c, TreeBuilder(body_e)); \
   } \
-  TreeBuilder operator OP(const int& c, const TensorDisambiguator& v) \
+  TreeBuilder operator OP(const DataType_t& c, const TensorDisambiguator& v) \
   { \
     ast::TensorAccess* body_e = v.ToTensorAccess(); \
     return operator OP(c, TreeBuilder(body_e)); \
@@ -303,10 +303,12 @@ void end();
 
 void DumpStats();
 
-ast::Expression* ToAccess(const int& c);
-ast::Statement* ToAssignment(const int& c, ast::Expression* body_e);
-ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
-ast::Statement* ToUpdateOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e);
+void w_heartbeat( std::string str, Var& val );
+
+ast::Expression* ToAccess(const DataType_t& c);
+ast::Statement* ToAssignment(const DataType_t& c, ast::Expression* body_e);
+ast::Expression* ToBinaryOp(const DataType_t& c, DataType_t (*op)(const DataType_t& a, const DataType_t& b), ast::Expression* body_e);
+ast::Statement* ToUpdateOp(const DataType_t& c, DataType_t (*op)(const DataType_t& a, const DataType_t& b), ast::Expression* body_e);
 
 void Init(int argc, char** argv);
 
@@ -450,7 +452,7 @@ class Container
 
 
   // For things like -
-  ast::Expression* ToUnaryOp(int (*op)(const int& a))
+  ast::Expression* ToUnaryOp(DataType_t (*op)(const DataType_t& a))
   {
     ast::Expression* access_e = ToAccess();
     ast::UnaryOp* op_e = new ast::UnaryOp(op, access_e);
@@ -458,7 +460,7 @@ class Container
   }
 
   // For things like *, +
-  ast::Expression* ToBinaryOp(int (*op)(const int& a, const int& b), ast::Expression* body_e)
+  ast::Expression* ToBinaryOp(DataType_t (*op)(const DataType_t& a, const DataType_t& b), ast::Expression* body_e)
   {
     ast::Expression* access_e = ToAccess();
     ast::BinaryOp* op_e = new ast::BinaryOp(op, access_e, body_e);
@@ -466,7 +468,7 @@ class Container
   }
 
   // For things like +=, *=
-  ast::Statement* ToUpdateOp(int (*op)(const int& a, const int& b), ast::Expression* body_e)
+  ast::Statement* ToUpdateOp(DataType_t (*op)(const DataType_t& a, const DataType_t& b), ast::Expression* body_e)
   {
     ast::Expression* plus_e = ToBinaryOp(op, body_e);
     ast::Statement* assign_stmt = ToAssignment(plus_e);
@@ -487,6 +489,7 @@ class Container
   WHOOP_DECLARE_EXPR_BINARY_OPERATOR(/)
   WHOOP_DECLARE_EXPR_BINARY_OPERATOR(%)
   WHOOP_DECLARE_EXPR_BINARY_OPERATOR(==)
+  WHOOP_DECLARE_EXPR_BINARY_OPERATOR(<<=)
   WHOOP_DECLARE_EXPR_BINARY_OPERATOR(!=)
   WHOOP_DECLARE_EXPR_BINARY_OPERATOR(>=)
   WHOOP_DECLARE_EXPR_BINARY_OPERATOR(<=)
@@ -505,6 +508,7 @@ WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(*)
 WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(/)
 WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(%)
 WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(==)
+WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(<<=)
 WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(!=)
 WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(>=)
 WHOOP_DECLARE_CONST_EXPR_BINARY_OPERATOR(<=)
@@ -1132,12 +1136,12 @@ class Vec : public Tensor
     PrimPushBack(val, 0);
   }
   
-  int& At(const int& idx)
+  DataType_t& At(const int& idx)
   {
     return PrimAt(idx);
   }
 
-  const int& At(const int& idx) const
+  const DataType_t& At(const int& idx) const
   {
     return PrimAt(idx);
   }
