@@ -1209,6 +1209,162 @@ class GraphAlgorithm
         whoop::Done();
     }
 
+    void Whoop_PageRankNibble_Untiled_Compressed_TraceFrontierGeneration()
+    {
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+        Var iters("iters");
+
+        // Generate The New Frontier
+        frontier_empty    = 1;
+        frontier_cnt      = 0;
+            
+        t_for(v, 0, V);
+        {
+
+            // Assume everything fits on chip LLB
+            residual->AddTileLevel( V );
+            residual_prime->AddTileLevel( V );
+            outDegree->AddTileLevel( V );
+            frontier->AddTileLevel( V );
+            SegmentArray->AddTileLevel( V+1 );
+            CoordinateArray->AddTileLevel( E );
+
+            // copy the update residuals
+//             (*residual)[v] = (*residual_prime)[v] + (*residual)[v]*0;
+
+            // Generate the new frontier
+            w_if( (*outDegree)[v] && ((*residual_prime)[v] >= ((*outDegree)[v] * epsilon)) );
+            {
+                (*frontier)[frontier_cnt] = v; // + (*frontier)[frontier_cnt]*0;
+                frontier_empty    = 0;
+                frontier_cnt     += 1;
+            }
+            end();
+        }
+        end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+        cout<< "Generated Frontier Size: "<<frontier_cnt.Access(0,0)<<endl;
+        
+        whoop::Done();
+    }
+
+    void Whoop_PageRankNibble_Untiled_Compressed_TracePRComp( int neighbors )
+    {
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+        Var iters("iters");
+
+        
+//         Vec frontier_size("frontier_size");
+// 
+//         for(int v=0; v<neighbors; v++) 
+//         {
+//             frontier->At({v})          = rand()%V;
+//         }
+
+        std::cout<<"Tracing Iteration With Neighbors: "<<neighbors<<endl;
+
+        frontier_cnt = neighbors;
+
+        // Update The Page Rank
+        t_for(p, 0, frontier_cnt);
+        {
+
+            // Assume everything fits on chip LLB
+            residual->AddTileLevel( V );
+            residual_prime->AddTileLevel( V );
+            outDegree->AddTileLevel( V );
+            frontier->AddTileLevel( V );
+            SegmentArray->AddTileLevel( V+1 );
+            CoordinateArray->AddTileLevel( E );
+
+            v = (*frontier)[p];
+            (*pageRank)[v] += weight1 * (*residual)[v];
+            (*residual_prime)[v] = 0 + (*residual_prime)[v]*0;
+        }
+        end();
+
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+        cout<< "Generated Frontier Size: "<<frontier_cnt.Access(0,0)<<endl;
+        
+        whoop::Done();
+    }    
+
+
+    void Whoop_PageRankNibble_Untiled_Compressed_TraceIter( int neighbors )
+    {
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+        Var iters("iters");
+
+        
+//         Vec frontier_size("frontier_size");
+// 
+//         for(int v=0; v<neighbors; v++) 
+//         {
+//             frontier->At({v})          = rand()%V;
+//         }
+
+        std::cout<<"Tracing Iteration With Neighbors: "<<neighbors<<endl;
+
+        frontier_cnt = neighbors;
+
+        // Propogate The Residuals To Neighbors
+        t_for(q, 0, frontier_cnt);
+        {
+            // Assume everything fits on chip LLB
+            residual->AddTileLevel( V );
+            residual_prime->AddTileLevel( V );
+            outDegree->AddTileLevel( V );
+            frontier->AddTileLevel( V );
+            SegmentArray->AddTileLevel( V+1 );
+            CoordinateArray->AddTileLevel( E );
+
+            s = (*frontier)[q];
+            update = weight2 * (*residual)[s] / (*outDegree)[s];
+            
+            pos_start = (*SegmentArray)[s];
+            pos_end   = (*SegmentArray)[s+1];
+                
+            t_for(p,pos_start,pos_end);
+            {
+                d = (*CoordinateArray)[p];
+                (*residual_prime)[d] += update;
+            }
+            end();
+        }
+        end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+
+        std::cout<<"Number of Neighbors: "<<neighbors<<std::endl;
+
+        whoop::Done();
+
+    }
+    
+
+
     void Whoop_PageRankNibble_Untiled_Compressed( int seed, int RF_KB, int BufferL1_KB, int BufferL2_KB, FORMAT_TYPE format )
     {
         CalculateDegrees();
@@ -1286,29 +1442,13 @@ class GraphAlgorithm
             iters += 1;
             (*dstData)[0] += iters;
 
-#ifdef EXTRA_BUFFERING
-            // Assume everything fits on chip LLB
-            pageRank->AddTileLevel( V, V, 8, 1024 );
-            residual->AddTileLevel( V, V, 8, 1024 );
-            residual_prime->AddTileLevel( V, V, 8, 1024 );
-            outDegree->AddTileLevel( V, V, 8, 1024 );
-            frontier->AddTileLevel( V, V, 8, 1024 );
-            dstData->AddTileLevel(1, 1, 8, 1024);
-
-            SegmentArray->AddTileLevel( V+1, V+1, 8, 1024 );
-            CoordinateArray->AddTileLevel( E, E, 8, 1024 );
-
-#else
-
             // Assume everything fits on chip LLB
             pageRank->AddTileLevel( V );
             residual->AddTileLevel( V );
             residual_prime->AddTileLevel( V );
             outDegree->AddTileLevel( V );
             frontier->AddTileLevel( V );
-            dstData->AddTileLevel(1);
-#endif
-
+            dstData->AddTileLevel(8);
             SegmentArray->AddTileLevel( V+1 );
             CoordinateArray->AddTileLevel( E );
 
@@ -1344,11 +1484,11 @@ class GraphAlgorithm
             
             t_for(v, 0, V);
             {
-                // copy the update residuals
-                (*residual)[v] = (*residual_prime)[v] + (*residual)[v]*0;
+//                 // copy the update residuals
+//                 (*residual)[v] = (*residual_prime)[v] + (*residual)[v]*0;
 
                 // Generate the new frontier
-                w_if( (*outDegree)[v] && ((*residual)[v] >= ((*outDegree)[v] * epsilon)) );
+                w_if( (*outDegree)[v] && ((*residual_prime)[v] >= ((*outDegree)[v] * epsilon)) );
                 {
                     (*frontier)[frontier_cnt] = v + (*frontier)[frontier_cnt]*0;
                     frontier_empty    = 0;
@@ -1655,6 +1795,228 @@ class GraphAlgorithm
         std::cout<<endl;
 
         whoop::Done();
+    }
+
+
+    void Whoop_PageRankNibble_Untiled_Compressed_Parallel_TraceIter( int neighbors )
+    {
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+
+        Var d1("d1"), s4("s4"), s3("s3"), s2("s2"), s1("s1"), d0("d0"), s0("s0");
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+        Var iters("iters");
+
+
+        int S0 = neighbors / (VIVALDI_NUM_DOT_C * VIVALDI_NUM_CT);
+
+        if( S0 < 1 ) S0++;
+        int S1 = VIVALDI_NUM_CT;
+        int S2 = VIVALDI_NUM_DOT_C;
+        int S3 = neighbors / (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT);
+        if( neighbors % (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT) ) 
+        {
+            S3 += 1;
+        }
+        
+        std::cout<<"Parallel Tracing Iteration With Neighbors: "<<neighbors<<endl;
+
+        frontier_cnt = neighbors;
+
+        // Propogate The Residuals To Neighbors
+        t_for(s3, 0, S3);
+        {
+            // Assume everything fits on chip LLB
+            residual->AddTileLevel( V );
+            residual_prime->AddTileLevel( V );
+            outDegree->AddTileLevel( V );
+            frontier->AddTileLevel( V );
+            SegmentArray->AddTileLevel( V+1 );
+            CoordinateArray->AddTileLevel( E );
+
+            s_for(s2, 0, VIVALDI_NUM_DOT_C);
+            {
+                s_for(s1, 0, VIVALDI_NUM_CT);
+                {
+                    frontier->AddTileLevel( S0 );
+
+                    t_for(s0, 0, S0);
+                    {
+                        q = s3*S2*S1*S0 + s2*S1*S0 + s1*S0 + s0;
+
+                        w_if( q < frontier_cnt);
+                        {
+                            s = (*frontier)[q];
+
+                            update = weight2 * (*residual)[s] / (*outDegree)[s];
+
+                            pos_start = (*SegmentArray)[s];
+                            pos_end   = (*SegmentArray)[s+1];
+                
+                            t_for(p,pos_start,pos_end);
+                            {
+                                d = (*CoordinateArray)[p];
+                                (*residual_prime)[d] += update;
+                            }
+                            end();
+                        }
+                        end();
+                            
+                    }
+                    end();
+                }
+                end();
+            }
+            end();
+        }
+        end();
+
+        
+//         // Propogate The Residuals To Neighbors
+//         t_for(q, 0, frontier_cnt);
+//         {
+// 
+//             // Assume everything fits on chip LLB
+//             residual->AddTileLevel( V );
+//             residual_prime->AddTileLevel( V );
+//             outDegree->AddTileLevel( V );
+//             frontier->AddTileLevel( V );
+//             SegmentArray->AddTileLevel( V+1 );
+//             CoordinateArray->AddTileLevel( E );
+// 
+//             t_for(p, (*SegmentArray)[ (*frontier)[q] ] , (*SegmentArray)[ (*frontier)[q]+1]);
+//             {
+//                 (*residual_prime)[ (*CoordinateArray)[p] ] += (*residual)[ (*frontier)[q] ] / (*outDegree)[ (*frontier)[q] ];
+//             }
+//             end();
+//         }
+//         end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+
+        std::cout<<"Number of Neighbors: "<<neighbors<<std::endl;
+
+        whoop::Done();
+
+    }
+
+
+    void Whoop_PageRankNibble_Untiled_Compressed_Parallel_TraceISTAIter( int neighbors )
+    {
+        Var v("v"), s("s"), d("d");
+        Var weight1("weight1"), weight2("weight2"), frontier_empty("frontier_empty"), update("update"), frontier_cnt("frontier_cnt");
+        
+
+        Var d1("d1"), s4("s4"), s3("s3"), s2("s2"), s1("s1"), d0("d0"), s0("s0");
+        Var pos_start("pos_start"), pos_end("pos_end"), p("p"), q("q");
+        Var iters("iters");
+
+
+        int S0 = neighbors / (VIVALDI_NUM_DOT_C * VIVALDI_NUM_CT);
+
+        if( S0 < 1 ) S0++;
+        int S1 = VIVALDI_NUM_CT;
+        int S2 = VIVALDI_NUM_DOT_C;
+        int S3 = neighbors / (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT);
+        if( neighbors % (S0*VIVALDI_NUM_DOT_C*VIVALDI_NUM_CT) ) 
+        {
+            S3 += 1;
+        }
+        
+        std::cout<<"ISTA Tracing Creating Neighbors: "<<neighbors<<endl;
+
+        CalculateDegrees();
+
+        frontier_cnt = neighbors;
+
+        for(int v=0; v<neighbors; v++) 
+        {
+            frontier->At({v})          = rand()%V;
+        }
+
+
+        // Propogate The Residuals To Neighbors
+        t_for(s3, 0, S3);
+        {
+            // Assume everything fits on chip LLB
+            residual->AddTileLevel( V );
+            residual_prime->AddTileLevel( V );
+            outDegree->AddTileLevel( V );
+            frontier->AddTileLevel( V );
+            SegmentArray->AddTileLevel( V+1 );
+            CoordinateArray->AddTileLevel( E );
+            ValueArray->AddTileLevel( E );
+
+            s_for(s2, 0, VIVALDI_NUM_DOT_C);
+            {
+                s_for(s1, 0, VIVALDI_NUM_CT);
+                {
+//                     frontier->AddTileLevel( S0 );
+
+                    t_for(s0, 0, S0);
+                    {
+                        q = s3*S2*S1*S0 + s2*S1*S0 + s1*S0 + s0;
+
+                        w_if( q < frontier_cnt);
+                        {
+                            s = (*frontier)[q];
+
+                            update = weight2 * (*residual)[s] / (*outDegree)[s];
+
+                            pos_start = (*SegmentArray)[s];
+                            pos_end   = (*SegmentArray)[s+1];
+                
+                            t_for(p,pos_start,pos_end);
+                            {
+                                d = (*CoordinateArray)[p];
+                                update = (*ValueArray)[p];
+                                (*residual_prime)[d] += update;
+                            }
+                            end();
+                        }
+                        end();
+                            
+                    }
+                    end();
+                }
+                end();
+            }
+            end();
+        }
+        end();
+
+        
+//         // Propogate The Residuals To Neighbors
+//         t_for(q, 0, frontier_cnt);
+//         {
+// 
+//             // Assume everything fits on chip LLB
+//             residual->AddTileLevel( V );
+//             residual_prime->AddTileLevel( V );
+//             outDegree->AddTileLevel( V );
+//             frontier->AddTileLevel( V );
+//             SegmentArray->AddTileLevel( V+1 );
+//             CoordinateArray->AddTileLevel( E );
+// 
+//             t_for(p, (*SegmentArray)[ (*frontier)[q] ] , (*SegmentArray)[ (*frontier)[q]+1]);
+//             {
+//                 (*residual_prime)[ (*CoordinateArray)[p] ] += (*residual)[ (*frontier)[q] ] / (*outDegree)[ (*frontier)[q] ];
+//             }
+//             end();
+//         }
+//         end();
+
+        cout<<endl;
+        cout<< "\tStarting WHOOP Mode..." <<endl;
+        whoop::Run();
+        cout<< "\tFinished WHOOP Mode..." <<endl;
+
+        whoop::Done();
+
     }
 
     void Whoop_PageRankNibble_Untiled_Compressed_Parallel_Tiled( int seed, int RF_KB, int BufferL1_KB, int BufferL2_KB, FORMAT_TYPE format )
@@ -2037,6 +2399,356 @@ class GraphAlgorithm
         }
     }
 
+    void PageRankNibble_Untiled_Compressed_TraceIter( int seed )
+    {
+        CalculateDegrees();
+
+        int iters = 0;
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual_prime->At({v}) = 0;
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({frontier_size}) = seed;
+        residual->At({seed})          = 1;
+        residual_prime->At({seed})    = 1;
+        
+        frontier_empty       = 0;
+        frontier_size        = 1;
+        
+        while( frontier_empty == 0 )
+        {
+            iters++;
+            
+            // Update The Page Rank
+            for(int p=0; p<frontier_size; p++)
+            {
+                v = frontier->At({p});
+                pageRank->At({v}) += weight1 * residual->At({v});
+                residual_prime->At({v}) = 0;
+            }
+
+            // Propogate The Residuals To Neighbors
+            for(int q=0; q<frontier_size; q++)
+            {
+                s = frontier->At({q});
+
+                pos_start = SegmentArray->At({s});
+                pos_end   = SegmentArray->At({s+1});
+
+                for(p=pos_start; p<pos_end; p++)
+                {
+                    d = CoordinateArray->At({p});
+                    residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                }
+            }
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
+                    frontier->At({frontier_size}) = v;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+            }
+
+            cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<std::endl;
+
+            if( iters == ARG_MAX_ITERATIONS )
+            {
+                Whoop_PageRankNibble_Untiled_Compressed_TraceIter( frontier_size );
+                return;
+            }
+        }
+    }
+
+    void PageRankNibble_Untiled_Compressed_Parallel_TraceIter( int seed )
+    {
+        CalculateDegrees();
+
+        int iters = 0;
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual_prime->At({v}) = 0;
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({frontier_size}) = seed;
+        residual->At({seed})          = 1;
+        residual_prime->At({seed})    = 1;
+        
+        frontier_empty       = 0;
+        frontier_size        = 1;
+        
+        while( frontier_empty == 0 )
+        {
+            iters++;
+            
+            // Update The Page Rank
+            for(int p=0; p<frontier_size; p++)
+            {
+                v = frontier->At({p});
+                pageRank->At({v}) += weight1 * residual->At({v});
+                residual_prime->At({v}) = 0;
+            }
+
+            // Propogate The Residuals To Neighbors
+            for(int q=0; q<frontier_size; q++)
+            {
+                s = frontier->At({q});
+
+                pos_start = SegmentArray->At({s});
+                pos_end   = SegmentArray->At({s+1});
+
+                for(p=pos_start; p<pos_end; p++)
+                {
+                    d = CoordinateArray->At({p});
+                    residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                }
+            }
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
+                    frontier->At({frontier_size}) = v;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+            }
+
+            cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<std::endl;
+
+            if( iters == ARG_MAX_ITERATIONS )
+            {
+                Whoop_PageRankNibble_Untiled_Compressed_Parallel_TraceIter( frontier_size );
+                return;
+            }
+        }
+    }
+
+    void PageRankNibble_Untiled_Compressed_Parallel_TraceFrontierGeneration( int seed )
+    {
+        CalculateDegrees();
+
+        int iters = 0;
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual_prime->At({v}) = 0;
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({frontier_size}) = seed;
+        residual->At({seed})          = 1;
+        residual_prime->At({seed})    = 1;
+        
+        frontier_empty       = 0;
+        frontier_size        = 1;
+        
+        while( frontier_empty == 0 )
+        {
+            iters++;
+            
+            // Update The Page Rank
+            for(int p=0; p<frontier_size; p++)
+            {
+                v = frontier->At({p});
+                pageRank->At({v}) += weight1 * residual->At({v});
+                residual_prime->At({v}) = 0;
+            }
+
+            // Propogate The Residuals To Neighbors
+            for(int q=0; q<frontier_size; q++)
+            {
+                s = frontier->At({q});
+
+                pos_start = SegmentArray->At({s});
+                pos_end   = SegmentArray->At({s+1});
+
+                for(p=pos_start; p<pos_end; p++)
+                {
+                    d = CoordinateArray->At({p});
+                    residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                }
+            }
+
+            cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<std::endl;
+
+            if( iters == ARG_MAX_ITERATIONS )
+            {
+                Whoop_PageRankNibble_Untiled_Compressed_TraceFrontierGeneration();
+                return;
+            }
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
+                    frontier->At({frontier_size}) = v;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+            }
+
+        }
+    }
+
+    void PageRankNibble_Untiled_Compressed_Parallel_TracePRComp( int seed )
+    {
+        CalculateDegrees();
+
+        int iters = 0;
+        int v, s, d, frontier_empty, pos_start, pos_end, p, frontier_size;
+        double weight1, weight2, update;
+
+        weight1 = (2*alpha) / (1+alpha);
+        weight2 = (1 - alpha) / (1 +  alpha);
+
+        frontier_size  = 0;
+        frontier_empty = 1;
+
+        // Initialize For This Seed
+        for(int v=0; v<V; v++)
+        {
+            residual_prime->At({v}) = 0;
+            residual->At({v}) = 0;
+            pageRank->At({v}) = 0;
+            frontier->At({v}) = 0;
+        }
+        
+        // Start Page Rank Computation
+        frontier->At({frontier_size}) = seed;
+        residual->At({seed})          = 1;
+        residual_prime->At({seed})    = 1;
+        
+        frontier_empty       = 0;
+        frontier_size        = 1;
+        
+        while( frontier_empty == 0 )
+        {
+            iters++;
+
+            if( iters == ARG_MAX_ITERATIONS )
+            {
+                Whoop_PageRankNibble_Untiled_Compressed_TracePRComp( frontier_size );
+                return;
+            }
+            
+            // Update The Page Rank
+            for(int p=0; p<frontier_size; p++)
+            {
+                v = frontier->At({p});
+                pageRank->At({v}) += weight1 * residual->At({v});
+                residual_prime->At({v}) = 0;
+            }
+
+            // Propogate The Residuals To Neighbors
+            for(int q=0; q<frontier_size; q++)
+            {
+                s = frontier->At({q});
+
+                pos_start = SegmentArray->At({s});
+                pos_end   = SegmentArray->At({s+1});
+
+                for(p=pos_start; p<pos_end; p++)
+                {
+                    d = CoordinateArray->At({p});
+                    residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                }
+            }
+
+            cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<std::endl;
+
+
+            // Generate The New Frontier
+            frontier_empty = 1;
+            frontier_size  = 0;
+            
+            for(int v=0; v<V; v++)
+            {
+                // copy the update residuals
+                residual->At({v}) = residual_prime->At({v});
+            
+                // Generate the new frontier
+                if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
+                {
+//                     std::cout<<"\tAdding: "<<v<<" to next frontier"<<endl;
+                    frontier->At({frontier_size}) = v;
+                    frontier_empty = 0;
+                    frontier_size++;
+                }
+            }
+
+        }
+    }
 
     void PageRankNibble_Untiled_Compressed( int seed )
     {
@@ -2278,6 +2990,8 @@ class GraphAlgorithm
         
         frontier_empty       = 0;
         frontier_size        = 1;
+
+        int ops = 0;
         
         while( frontier_empty == 0 )
         {
@@ -2291,6 +3005,8 @@ class GraphAlgorithm
                 v = frontier->At({p});
                 pageRank->At({v}) += weight1 * residual->At({v});
                 residual_prime->At({v}) = 0;
+
+                ops += 2;
             }
 
             int S0 = frontier_size / (VIVALDI_NUM_DOT_C * VIVALDI_NUM_CT);
@@ -2324,7 +3040,10 @@ class GraphAlgorithm
                                     s = frontier->At({q});
                                     pos_start = SegmentArray->At({s}) + DeltaArray->At({s});
                                     pos_end   = SegmentArray->At({s+1});
+                                    double update = weight2 * residual->At({s}) / outDegree->At({s});
 
+                                    ops += 2;
+                                    
                                     bool crossed_tile_boundary = 0;
                                     p = pos_start;
                                     
@@ -2336,8 +3055,10 @@ class GraphAlgorithm
 
                                         if( d1_of_p == d1 ) 
                                         {
-                                            residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+//                                             residual_prime->At({d}) += weight2 * residual->At({s}) / outDegree->At({s});
+                                            residual_prime->At({d}) += update;
                                             p++;
+                                            ops++;
                                         }
                                         else
                                         {
@@ -2365,7 +3086,8 @@ class GraphAlgorithm
                 
                 // copy the update residuals
                 residual->At({v}) = residual_prime->At({v});
-            
+
+                if( outDegree->At({v}) ) ops += 2;
                 // Generate the new frontier
                 if( outDegree->At({v}) && (residual->At({v}) >= (outDegree->At({v}) * epsilon)) )
                 {
@@ -2377,12 +3099,15 @@ class GraphAlgorithm
             }
 
             cout<<"Iteration: "<<iters<<" Frontier Size: "<<frontier_size<<" \t\tS3: "<<S3<<" S2: "<<S2<<" S1: "<<S1<<" S0: "<<S0<<endl;
-
+            
             if( iters > ARG_MAX_ITERATIONS )
             {
                 frontier_empty = 1;
             }
         }
+
+        cout<<"Total Ops: "<<ops<<endl;
+
     }
 
     void Untiled( int X0, int X1, int X2, FORMAT_TYPE format )
