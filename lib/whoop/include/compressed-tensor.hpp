@@ -63,15 +63,15 @@ class CompressedTensor
   std::vector<std::shared_ptr<Vec>> coordinates_;
   std::shared_ptr<Vec> values_;
 
-  CompressedTensor(const std::string& name, const std::vector<int>& dim_sizes, const std::vector<std::string>& dim_names, long nnz, const Type& my_type = Type::Normal) :
+  CompressedTensor(const std::string& name, const int num_dims, const std::vector<int>& dim_sizes, const std::vector<std::string>& dim_names, long nnz, const Type& my_type = Type::Normal) :
     name_(name),
     my_type_(my_type),
-    num_dims_(dim_sizes.size()),
+    num_dims_(num_dims),
     dim_sizes_(dim_sizes),
     dim_names_(dim_names),
     last_inserted_coordinate_(dim_sizes_.size(), -1),
-    coordinates_(dim_sizes_.size(), NULL),
-    segments_(dim_sizes_.size(), NULL)
+    coordinates_(num_dims, NULL),
+    segments_(num_dims, NULL)
   {
     //if (my_type_ != Type::Out) Neal: we need to init output as well (have override for init)
       Init(nnz);        
@@ -529,7 +529,7 @@ class CompressedTensor
   
   friend class boost::serialization::access;
 
-  template<class Archive>
+/*  template<class Archive>
   void serialize(Archive & ar, const unsigned int version)
   {
     ar & num_dims_;
@@ -545,8 +545,38 @@ class CompressedTensor
     ar & segments_;
     ar & coordinates_;
     ar & values_;
-  }
+  }*/
   
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version)
+  {
+//      ar & num_dims_; constructor must provide, used for checking later
+      ar & nnz_in_;
+
+      ar & dim_sizes_;
+      ar & dim_names_;
+
+      ar & last_inserted_coordinate_;
+
+    // Note: serialization of std::shared_ptr by default serializes
+    // the underlying object correctly. Thanks boost!
+
+      for (int x = 0; x < num_dims_; x++)
+      {  
+          ar & segments_[x]->dim_sizes_;
+          ar & segments_[x]->vals_;
+      }
+
+      for (int x = 0; x < num_dims_; x++)
+      {  
+          ar & coordinates_[x]->dim_sizes_;
+          ar & coordinates_[x]->vals_;
+      }
+
+      ar & values_->dim_sizes_;
+      ar & values_->vals_;
+      
+  }  
 };
 
 class CompressedTensorIn : public CompressedTensor, public InFromFile
@@ -554,8 +584,8 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
  public:
   std::string filename_;
  
-  CompressedTensorIn(const std::string& nm) :
-    CompressedTensor(nm, {}, {}, 0)
+  CompressedTensorIn(const std::string& nm, const int num_dims) :
+    CompressedTensor(nm, num_dims, {}, {}, 0)
   {
     filename_ = nm + ".in.txt";
     AddOption(&filename_, "tensor_" + nm + "_file", "Input datafile name for CompressedTensorIn " + nm);
@@ -588,16 +618,15 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
     ia >> (*this);
     TrimFat();
 
+    assert(dim_sizes_.size() == num_dims_ && "ReadInput: Compressed Tensor mismatch!");
 
-    std::cout << "ReadInput after for " << name_ << " num_dims_ " << num_dims_ << std::endl;
     for (int x = 0; x < num_dims_; x++)
     {
-
-      std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
-      segments_[x]->AppendToName(name_ + "_segments_" + std::to_string(x));
-      coordinates_[x]->AppendToName(name_ + "_coordinates_" + std::to_string(x));
+      std::cout << "  fixing up buffermodel sizes" << std::endl;
+      segments_[x]->FixupSize();
+      coordinates_[x]->FixupSize();
     }
-    values_->AppendToName(name_ + "_values");
+    values_->FixupSize();
   }
 };
 
@@ -607,8 +636,8 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
   std::string filename_;
   std::string ref_filename_;
 
-  CompressedTensorOut(const std::string& name) :
-     CompressedTensor(name, {}, {}, 0, Type::Out) 
+  CompressedTensorOut(const std::string& name, const int num_dims) :
+     CompressedTensor(name, num_dims, {}, {}, 0, Type::Out) 
   {
     Init(); //Neal calls local Init only
   }
@@ -641,14 +670,18 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
     boost::archive::text_iarchive ia(ifs);
     ia >> (*this);
     TrimFat();
+
+    assert(dim_sizes_.size() == num_dims_ && "ReadInput: Compressed Tensor mismatch!");
+
+
     for (int x = 0; x < num_dims_; x++)
     {
-
-      std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
-      segments_[x]->AppendToName(name_ + "_segments_" + std::to_string(x));
-      coordinates_[x]->AppendToName(name_ + "_coordinates_" + std::to_string(x));
+      std::cout << "  fixing up buffermodel sizes" << std::endl;
+      segments_[x]->FixupSize();
+      coordinates_[x]->FixupSize();
     }
-    values_->AppendToName(name_ + "_values");
+    values_->FixupSize();
+
   }
 
   
