@@ -3,4 +3,5 @@ Import('env')
 
 spmv    = Split(""" spmv_master.cpp """)
 
+#env.Append(CCFLAGS = '-DUSE_DOUBLE=1')
 env.Program(target = 'spmv.bin', source = spmv)
