@@ -302,8 +302,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         command_log_.SetModified();
       }
       int remaining_lines = num_fills_ - num_shrinks_;
-      command_log_.Shrink(remaining_lines);
-      shrink_pgen_log_.Shrink(remaining_lines);
+      command_log_.Shrink(remaining_lines * fill_granularity_);
+      shrink_pgen_log_.Shrink(remaining_lines * fill_granularity_);
     }
   }
   
@@ -341,8 +341,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       }
       
       // Log the shrink.
-      command_log_.Shrink();
-      shrink_pgen_log_.Shrink();
+      command_log_.Shrink(fill_granularity_);
+      shrink_pgen_log_.Shrink(fill_granularity_);
       num_shrinks_++;
     }
 
@@ -367,7 +367,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   int local_spatial_idx_;
   int size_;
   int fill_granularity_;
-  int access_granularity_;  // Expressed as even divisor of fill_granularity. e.g., fill_granularity = 6 means access granularity can be 1/2/3
+  int access_granularity_;
   
   BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int sz, int access_granularity, int fill_granularity) :
     StatsCollection(nm, &top_stats),
@@ -376,7 +376,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     starting_global_tile_level_(starting_tile_level),
     ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
-    size_(sz/fill_granularity),
+    size_(sz),
     fill_granularity_(fill_granularity),
     access_granularity_(access_granularity)
   {
@@ -408,9 +408,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: true" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"size_ = " <<  size_ * (fill_granularity_ / access_granularity_) << "\"" << std::endl;
+    ostr << "        - \"size_ = " <<  size_ / access_granularity_ << "\"" << std::endl;
     ostr << "        - \"base_ = " <<  0 << "\"" << std::endl;
-    ostr << "        - \"bound_ = " <<  size_ * (fill_granularity_ / access_granularity_) << "\"" << std::endl;
+    ostr << "        - \"bound_ = " <<  size_ / access_granularity_ << "\"" << std::endl;
     ostr << "        - \"use_external_fills_ = " <<  (starting_global_tile_level_ != 0) << "\"" << std::endl;
     ostr << "        - \"use_absolute_address_mode_ = false\"" << std::endl;
     ostr << "        - \"automatically_handle_fills_ = true\"" << std::endl;
@@ -575,7 +575,11 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void Resize(int size)
   {
-    size_ = size / fill_granularity_;
+    if (size % fill_granularity_ != 0)
+    {
+      size += fill_granularity_ - (size % fill_granularity_);
+    }
+    size_ = size;
     command_log_.Resize(size_);
   }
 
@@ -624,8 +628,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     if (level_ == 0)
     {
       fill_granularity_ = access_granularity_;
+      Resize(size_); // Round up with the newest granularity.
     }
-    command_log_.SetAccessThreshold(fill_granularity_ / access_granularity_);
+    command_log_.SetAccessThreshold(access_granularity_);
   }
   
 };
@@ -679,7 +684,7 @@ class BackingBufferModel : public BufferModel
       CheckRowBufferHit(address);
       IncrStat("Backing reads");
       T(4) << "Read, address: " << addr << " (line_address: " << address << ") by requestor: " << requestor_idx << EndT;
-      LogAccess(address, requestor_idx, address);
+      LogAccess(address, requestor_idx, address / access_granularity_);
       TryToDrainOldestAccesses();
     }
   }
@@ -698,7 +703,7 @@ class BackingBufferModel : public BufferModel
 
       IncrStat("Backing updates");
       T(4) << "Update, address: " << addr  << " (line_address: " << address << ") by requestor: " << requestor_idx << EndT;
-      LogUpdate(address, requestor_idx, address);
+      LogUpdate(address, requestor_idx, address / access_granularity_);
       TryToDrainOldestAccesses();
     }
   }
@@ -753,9 +758,9 @@ class AssociativeBufferModel : public BufferModel
     BufferModel(level, starting_tile_level, local_spatial_idx, nm, size, access_granularity, fill_granularity) 
   {
     command_log_.Init(size_);
-    int final_shrink_thresh = shrink_threshold == 0 ? size_ : shrink_threshold/fill_granularity;
-    command_log_.SetShrinkThreshold(final_shrink_thresh);
-    shrink_pgen_log_.SetShrinkThreshold(final_shrink_thresh);
+    int final_shrink_thresh = shrink_threshold == 0 ? size_ : shrink_threshold;
+    command_log_.SetShrinkThreshold(final_shrink_thresh, fill_granularity_);
+    shrink_pgen_log_.SetShrinkThreshold(final_shrink_thresh, fill_granularity_);
   }
 
   void EvictLRU()
@@ -765,7 +770,7 @@ class AssociativeBufferModel : public BufferModel
     EntryInfo victim = presence_info_[victim_addr];
 
     // We now have enough info to determine the victim's buffet slot.
-    int slot = num_evicts_ % size_;
+    int slot = num_evicts_ % (size_ / access_granularity_);
     //T(0) << "Slot: " << slot << ", num_evicts: " << num_evicts_ << ", size:" << size_ << EndT;
     num_evicts_++;
 
@@ -830,7 +835,7 @@ class AssociativeBufferModel : public BufferModel
     {
       IncrStat("L" + std::to_string(level_) + " fills");
       num_fills_++;
-      if (occupancy_ == size_)
+      if (occupancy_ == (size_ / fill_granularity_))
       {
         EvictLRU();
         caused_evict = true;
@@ -879,7 +884,7 @@ class AssociativeBufferModel : public BufferModel
     if (!found)
     {
       num_fills_++;
-      if (occupancy_ == size_)
+      if (occupancy_ == (size_ / fill_granularity_))
       {
         EvictLRU();
         caused_evict = true;
