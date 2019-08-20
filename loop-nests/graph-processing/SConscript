@@ -27,7 +27,7 @@
 Import('env')
 
 subdirs = ['triangle-counting', 'bfs', 'connected-components',
-           'bfs-pull', 'pagerank', 'spmv', 'bfs-push-pull']
+           'bfs-pull', 'pagerank', 'spmv', 'bfs-push-pull', 'pagerank-nibble']
 
 #disabled = ['connected-components']
 
