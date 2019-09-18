@@ -54,7 +54,7 @@
 #include "pure-abstract-syntax-types.hpp"
 #include "pure-abstract-syntax.hpp"
 
-typedef unsigned long UINT64;
+#include "typedefs.hpp"
 
 namespace whoop
 {
@@ -304,8 +304,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         command_log_.SetModified();
       }
       int remaining_lines = num_fills_ - num_shrinks_;
-      command_log_.Shrink(remaining_lines);
-      shrink_pgen_log_.Shrink(remaining_lines);
+      command_log_.Shrink(remaining_lines * fill_granularity_);
+      shrink_pgen_log_.Shrink(remaining_lines * fill_granularity_);
     }
   }
   
@@ -343,8 +343,8 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       }
       
       // Log the shrink.
-      command_log_.Shrink();
-      shrink_pgen_log_.Shrink();
+      command_log_.Shrink(fill_granularity_);
+      shrink_pgen_log_.Shrink(fill_granularity_);
       num_shrinks_++;
     }
 
@@ -352,7 +352,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   
   int AlignAddress(int addr)
   {
-    return (addr - (addr % access_granularity_));
+    return (addr - (addr % fill_granularity_));
   }
 
  public:
@@ -369,7 +369,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   int local_spatial_idx_;
   int size_;
   int fill_granularity_;
-  int access_granularity_;  // Expressed as even divisor of fill_granularity. e.g., fill_granularity = 6 means access granularity can be 1/2/3
+  int access_granularity_;
   
   BufferModel(int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int sz, int access_granularity, int fill_granularity) :
     StatsCollection(nm, &top_stats),
@@ -378,7 +378,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     starting_global_tile_level_(starting_tile_level),
     ending_global_tile_level_(starting_tile_level),
     local_spatial_idx_(local_spatial_idx),
-    size_(sz/access_granularity),
+    size_(sz),
     fill_granularity_(fill_granularity),
     access_granularity_(access_granularity)
   {
@@ -410,9 +410,9 @@ class BufferModel : public StatsCollection, public TraceableBuffer
     ostr << "    configuration:" << std::endl;
     ostr << "      knobs_use_prefix: true" << std::endl;
     ostr << "      knobs:" << std::endl;
-    ostr << "        - \"size_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"size_ = " <<  size_ / access_granularity_ << "\"" << std::endl;
     ostr << "        - \"base_ = " <<  0 << "\"" << std::endl;
-    ostr << "        - \"bound_ = " <<  size_ << "\"" << std::endl;
+    ostr << "        - \"bound_ = " <<  size_ / access_granularity_ << "\"" << std::endl;
     ostr << "        - \"use_external_fills_ = " <<  (starting_global_tile_level_ != 0) << "\"" << std::endl;
     ostr << "        - \"use_absolute_address_mode_ = false\"" << std::endl;
     ostr << "        - \"automatically_handle_fills_ = true\"" << std::endl;
@@ -602,7 +602,11 @@ class BufferModel : public StatsCollection, public TraceableBuffer
 
   void Resize(int size)
   {
-    size_ = size / access_granularity_;
+    if (size % fill_granularity_ != 0)
+    {
+      size += fill_granularity_ - (size % fill_granularity_);
+    }
+    size_ = size;
     command_log_.Resize(size_);
   }
 
@@ -646,10 +650,14 @@ class BufferModel : public StatsCollection, public TraceableBuffer
   }
   virtual void SetAccessGranularity(int g)
   {
-    assert(g > 0);
     ASSERT(level_ == 0 || fill_granularity_ % g == 0) << "Access granularity must be an even divisor of fill granularity. Fill: " << fill_granularity_ << ", access: " << g << EndT;
     access_granularity_ = g;
-    command_log_.SetAccessGranularity(g);
+    if (level_ == 0)
+    {
+      fill_granularity_ = access_granularity_;
+      Resize(size_); // Round up with the newest granularity.
+    }
+    command_log_.SetAccessThreshold(access_granularity_);
   }
   
 };
@@ -692,7 +700,7 @@ class BackingBufferModel : public BufferModel
 
   virtual void Access(int addr, int requestor_idx)
   {
-    int address = AlignAddress(addr) / access_granularity_;
+    int address = AlignAddress(addr);
     if (CheckCoalescing(address, requestor_idx, false))
     {  
       IncrStat("Backing multicasts");
@@ -703,14 +711,14 @@ class BackingBufferModel : public BufferModel
       CheckRowBufferHit(address);
       IncrStat("Backing reads");
       T(4) << "Read, address: " << addr << " (line_address: " << address << ") by requestor: " << requestor_idx << EndT;
-      LogAccess(address, requestor_idx, address);
+      LogAccess(address, requestor_idx, address / access_granularity_);
       TryToDrainOldestAccesses();
     }
   }
   
   virtual void Update(int addr, int requestor_idx)
   {
-    int address = AlignAddress(addr) / access_granularity_;
+    int address = AlignAddress(addr);
     if (CheckCoalescing(address, requestor_idx, true))
     {  
       IncrStat("Backing multi-reduces");
@@ -722,7 +730,7 @@ class BackingBufferModel : public BufferModel
 
       IncrStat("Backing updates");
       T(4) << "Update, address: " << addr  << " (line_address: " << address << ") by requestor: " << requestor_idx << EndT;
-      LogUpdate(address, requestor_idx, address);
+      LogUpdate(address, requestor_idx, address / access_granularity_);
       TryToDrainOldestAccesses();
     }
   }
@@ -773,13 +781,13 @@ class AssociativeBufferModel : public BufferModel
     }
   }
     
-  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_granularity, int access_granularity, int fill_granularity, int extra_buffering) :
-    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size + extra_buffering, access_granularity, fill_granularity) 
+  explicit AssociativeBufferModel(int size, int level, int starting_tile_level, int local_spatial_idx, const std::string& nm, int shrink_threshold, int access_granularity, int fill_granularity) :
+    BufferModel(level, starting_tile_level, local_spatial_idx, nm, size, access_granularity, fill_granularity) 
   {
     command_log_.Init(size_);
-    int final_shrink_gran = shrink_granularity == 0 ? size_ : shrink_granularity;
-    command_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
-    shrink_pgen_log_.SetShrinkGranularity(final_shrink_gran, fill_granularity_);
+    int final_shrink_thresh = shrink_threshold == 0 ? size_ : shrink_threshold;
+    command_log_.SetShrinkThreshold(final_shrink_thresh, fill_granularity_);
+    shrink_pgen_log_.SetShrinkThreshold(final_shrink_thresh, fill_granularity_);
   }
 
   void EvictLRU()
@@ -789,7 +797,7 @@ class AssociativeBufferModel : public BufferModel
     EntryInfo victim = presence_info_[victim_addr];
 
     // We now have enough info to determine the victim's buffet slot.
-    int slot = num_evicts_ % (size_);
+    int slot = num_evicts_ % (size_ / access_granularity_);
     //T(0) << "Slot: " << slot << ", num_evicts: " << num_evicts_ << ", size:" << size_ << EndT;
     num_evicts_++;
 
@@ -854,7 +862,7 @@ class AssociativeBufferModel : public BufferModel
     {
       IncrStat("L" + std::to_string(level_) + " fills");
       num_fills_++;
-      if (occupancy_ == size_)
+      if (occupancy_ == (size_ / fill_granularity_))
       {
         EvictLRU();
         caused_evict = true;
@@ -903,7 +911,7 @@ class AssociativeBufferModel : public BufferModel
     if (!found)
     {
       num_fills_++;
-      if (occupancy_ == size_)
+      if (occupancy_ == (size_ / fill_granularity_))
       {
         EvictLRU();
         caused_evict = true;
@@ -975,7 +983,7 @@ class PrimVar : public StatsCollection
 {
  public:
   
-  std::vector<int> vals_;
+  std::vector<DataType_t> vals_;
   
   PrimVar() = default;
 
@@ -996,7 +1004,7 @@ class PrimVar : public StatsCollection
     vals_.resize(flattened_num_partitions, 0xAAAAAAAA);
   }
   
-  void Update(const int& flat_base, const int& flat_bound, const int& new_val)
+  void Update(const int& flat_base, const int& flat_bound, const DataType_t& new_val)
   {
     IncrStat("Var updates");
     for (int x = flat_base; x < flat_bound; x++)
@@ -1005,10 +1013,10 @@ class PrimVar : public StatsCollection
     }
   }
   
-  int Access(const int& flat_base, const int& flat_bound)
+  DataType_t Access(const int& flat_base, const int& flat_bound)
   {
     IncrStat("Var reads");
-    int result = vals_[flat_base];
+    DataType_t result = vals_[flat_base];
     for (int x = flat_base; x < flat_bound; x++)
     {
       assert(result == vals_[x]);
@@ -1094,7 +1102,7 @@ class PrimTensor : public StatsCollection
  public:
   
   std::vector<int> dim_sizes_; // 0 == innermost, N-1 == outermost
-  std::vector<int> vals_;
+  std::vector<DataType_t> vals_;
   // A global id for this tensor in the list of all tensors.
   int id_;
   // The following information is important both for optimizations
@@ -1130,7 +1138,7 @@ class PrimTensor : public StatsCollection
   {
   }
 
-  void FillVal( int fill_val_ )
+  void FillVal( DataType_t fill_val_ )
   {
     std::fill(vals_.begin(), vals_.end(), fill_val_);
   }
@@ -1155,7 +1163,7 @@ class PrimTensor : public StatsCollection
     PrimTraverse(FlattenIndices(start_idx), FlattenIndices(end_idx), func);
   }
 
-  void Update(const std::vector<int>& idxs, const int& new_val, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
+  void Update(const std::vector<int>& idxs, const DataType_t& new_val, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1,  const int& port_idx = 0)
   {
     is_updated_dynamically_ = true;
     // TODO: better error messages.
@@ -1172,7 +1180,7 @@ class PrimTensor : public StatsCollection
     buffer_to_access->Update(idx, my_final_idx);
   }
   
-  int Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
+  DataType_t Access(const std::vector<int>& idxs, const int& access_tile_level, const int& compute_tile_level, const int& spatial_part_idx = 0, const int& num_spatial_partitions = 1, const int& port_idx = 0)
   {
     int buffer_spatial_part_idx = whoop::buff::GetBufIndex( spatial_part_idx, (*buffer_levels_[port_idx])[access_tile_level]->size(), num_spatial_partitions );      
     int num_buffers = (*buffer_levels_[port_idx])[access_tile_level]->size();
@@ -1187,24 +1195,24 @@ class PrimTensor : public StatsCollection
     return vals_[idx];
   }
 
-  int& At(const std::vector<int>& idxs)
+  DataType_t& At(const std::vector<int>& idxs)
   {
     UINT64 idx = FlattenIndices(idxs);
     return vals_[idx];
   }
 
-  const int& At(const std::vector<int>& idxs) const
+  const DataType_t& At(const std::vector<int>& idxs) const
   {
     UINT64 idx = FlattenIndices(idxs);
     return vals_[idx];
   }
   
-  int& PrimAt(const int& idx)
+  DataType_t& PrimAt(const int& idx)
   {
     return vals_[idx];
   }
 
-  const int& PrimAt(const int& idx) const
+  const DataType_t& PrimAt(const int& idx) const
   {
     return vals_[idx];
   }
@@ -1535,7 +1543,7 @@ class Expression : public ExecTraceable
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return 0;
   }
@@ -1560,7 +1568,7 @@ class VarAccess : public Expression
     return expr;
   }
   
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return target_.Access(ctx.FlatBegin(), ctx.FlatEnd());
   }
@@ -1595,7 +1603,7 @@ class TensorAccess : public Expression
     return converted_expr;
   }
   
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     auto idxs = EvaluateAll(idx_exprs_, ctx);
     std::vector<int> v(idxs.begin(), idxs.end());
@@ -1610,9 +1618,9 @@ class BinaryOp : public Expression
  public:
   Expression* src1_;
   Expression* src2_;
-  int (*op_)(const int& s1, const int& s2);
+  DataType_t (*op_)(const DataType_t& s1, const DataType_t& s2);
   
-  BinaryOp(int (*o)(const int& s1, const int& s2), Expression* s1, Expression* s2) :
+  BinaryOp(DataType_t (*o)(const DataType_t& s1, const DataType_t& s2), Expression* s1, Expression* s2) :
     src1_(s1), src2_(s2), op_(o)
   {
   }
@@ -1658,10 +1666,10 @@ class BinaryOp : public Expression
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
-    int v1 = src1_->Evaluate(ctx);
-    int v2 = src2_->Evaluate(ctx);
+    DataType_t v1 = src1_->Evaluate(ctx);
+    DataType_t v2 = src2_->Evaluate(ctx);
     return op_(v1, v2);
   }
 };
@@ -1671,9 +1679,9 @@ class UnaryOp : public Expression
 {
  public:
   Expression* src1_;
-  int (*op_)(const int& s);
+  DataType_t (*op_)(const DataType_t& s);
 
-  UnaryOp(int (*o)(const int& s1), Expression* s1) :
+  UnaryOp(DataType_t (*o)(const DataType_t& s1), Expression* s1) :
     src1_(s1), op_(o)
   {
   }
@@ -1694,9 +1702,9 @@ class UnaryOp : public Expression
     return expr;    
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
-    int v1 = src1_->Evaluate(ctx);
+    DataType_t v1 = src1_->Evaluate(ctx);
     return op_(v1);
   }
 };
@@ -1705,9 +1713,9 @@ class UnaryOp : public Expression
 class Constant : public Expression
 {
  public:
-  const int val_;
+  const DataType_t val_;
   
-  Constant(const int& v) : val_(v) {}
+  Constant(const DataType_t& v) : val_(v) {}
 
   virtual std::shared_ptr<timewhoop::Expression> ConvertExpression()
   {
@@ -1715,7 +1723,7 @@ class Constant : public Expression
     return expr;
   }
 
-  virtual int Evaluate(ExecutionContext& ctx)
+  virtual DataType_t Evaluate(ExecutionContext& ctx)
   {
     return val_;
   }
@@ -1860,7 +1868,7 @@ class VarAssignment : public Statement
     T(4) << "Entering: variable assignment." << EndT;
     if (body_)
     {
-      int res = body_->Evaluate(ctx);
+      DataType_t res = body_->Evaluate(ctx);
       T(3) << "Updating variable " << target_.name_ << " value to: " << res << " (partitions: " << ctx.FlatBegin() <<  ".." << ctx.FlatEnd() - 1 << ")" << EndT;
       target_.Update(ctx.FlatBegin(), ctx.FlatEnd(), res);
     }
@@ -1924,7 +1932,7 @@ class TensorAssignment : public Statement
   {
     T(4) << "Entering: tensor assignment." << EndT;
     auto idxs = EvaluateAll(idx_exprs_, ctx);
-    int res = body_->Evaluate(ctx);
+    DataType_t res = body_->Evaluate(ctx);
     std::vector<int> vidxs(idxs.begin(), idxs.end());
     T(3) << "Updating tensor " << target_.name_ << " index: " << ShowIndices(vidxs) << " value to: " << res << EndT;
     target_.Update(vidxs, res, tile_level_, compute_level_, ctx.CurrentSpatialPartition(), ctx.NumSpatialPartitions(), port_);
@@ -2321,7 +2329,7 @@ class If : public Statement
 
   virtual Statement* Execute(ExecutionContext& ctx)
   {
-  
+
     if (CurrentIsPaused(ctx))
     {
       T(4) << "Bypassing: dynamic if." << EndT;
@@ -2335,7 +2343,7 @@ class If : public Statement
     else
     {
       T(4) << "Entering: dynamic if." << EndT;
-      int res = test_expr_->Evaluate(ctx);
+      DataType_t res = test_expr_->Evaluate(ctx);
 
       if (res)
       {

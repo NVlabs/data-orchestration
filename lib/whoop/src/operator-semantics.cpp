@@ -33,94 +33,99 @@
 namespace whoop
 {
 
-  int PlusOp(const int& x, const int& y)
+  DataType_t PlusOp(const DataType_t& x, const DataType_t& y)
   {
     return x + y;
   }
   
-  int MinusOp(const int& x, const int& y)
+  DataType_t MinusOp(const DataType_t& x, const DataType_t& y)
   {
     return x - y;
   }
   
-  int MulOp(const int& x, const int& y)
+  DataType_t MulOp(const DataType_t& x, const DataType_t& y)
   {
     return x * y;
   }
   
-  int DivOp(const int& x, const int& y)
+  DataType_t DivOp(const DataType_t& x, const DataType_t& y)
   {
     assert(y != 0);
     return x / y;
   }
   
-  int ModOp(const int& x, const int& y)
+  DataType_t ModOp(const DataType_t& x, const DataType_t& y)
   {
     assert(y != 0);
-    return x % y;
+    return (int)x % (int)y;
   }
   
-  int EQOp(const int&x , const int& y)
+  DataType_t EQOp(const DataType_t&x , const DataType_t& y)
   {
     return x == y;
   }
+
+  DataType_t IntEQOp(const DataType_t&x , const DataType_t& y)
+  {
+    return (int)x == (int)y;
+  }
   
-  int NEQOp(const int&x , const int& y)
+  DataType_t NEQOp(const DataType_t&x , const DataType_t& y)
   {
     return x != y;
   }
   
-  int GTEOp(const int& x, const int& y)
+  DataType_t GTEOp(const DataType_t& x, const DataType_t& y)
   {
     return x >= y;
   }
   
-  int LTEOp(const int&x , const int& y)
+  DataType_t LTEOp(const DataType_t&x , const DataType_t& y)
   {
     return x <= y;
   }
   
-  int GTOp(const int& x, const int& y)
+  DataType_t GTOp(const DataType_t& x, const DataType_t& y)
   {
     return x > y;
   }
   
-  int LTOp(const int& x, const int& y)
+  DataType_t LTOp(const DataType_t& x, const DataType_t& y)
   {
     return x < y;
   }
   
-  int ANDOp(const int& x, const int& y)
+  DataType_t ANDOp(const DataType_t& x, const DataType_t& y)
   {
     return x && y;
   }
   
-  int OROp(const int& x, const int& y)
+  DataType_t OROp(const DataType_t& x, const DataType_t& y)
   {
     return x || y;
   }
   
-  int BWANDOp(const int& x, const int& y)
+  DataType_t BWANDOp(const DataType_t& x, const DataType_t& y)
   {
-    return x & y;
+    return (int)x & (int)y;
   }
   
-  int BWOROp(const int& x, const int& y)
+  DataType_t BWOROp(const DataType_t& x, const DataType_t& y)
   {
-    return x | y;
+    return (int)x | (int)y;
   }
   
-  int NOPOp(const int& x, const int& y)
+  DataType_t NOPOp(const DataType_t& x, const DataType_t& y)
   {
     return y;
   }
 
-  int POSTINCOp(const int& x)
+  DataType_t POSTINCOp(const DataType_t& x)
   {
     return (x+1); 
   }
 
-  int PREINCOp(const int& x)
+  DataType_t PREINCOp(const DataType_t& x)
   {
     return (x+1);
   }

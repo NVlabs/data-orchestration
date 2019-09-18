@@ -1,0 +1,6 @@
+Import('env')
+
+
+prnibble    = Split(""" prnibble_master.cpp """)
+
+env.Program(target = 'prnibble.bin', source = prnibble)

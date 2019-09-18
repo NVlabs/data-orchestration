@@ -70,6 +70,7 @@ WHOOP_DEFINE_EXPR_BINARY_OPERATOR(*, ToBinaryOp(MulOp, body_e.expr_));
 WHOOP_DEFINE_EXPR_BINARY_OPERATOR(/, ToBinaryOp(DivOp, body_e.expr_));
 WHOOP_DEFINE_EXPR_BINARY_OPERATOR(%, ToBinaryOp(ModOp, body_e.expr_));
 WHOOP_DEFINE_EXPR_BINARY_OPERATOR(==, ToBinaryOp(EQOp, body_e.expr_));
+WHOOP_DEFINE_EXPR_BINARY_OPERATOR(<<=, ToBinaryOp(IntEQOp, body_e.expr_));
 WHOOP_DEFINE_EXPR_BINARY_OPERATOR(!=, ToBinaryOp(NEQOp, body_e.expr_));
 WHOOP_DEFINE_EXPR_BINARY_OPERATOR(>=, ToBinaryOp(GTEOp, body_e.expr_));
 WHOOP_DEFINE_EXPR_BINARY_OPERATOR(<=, ToBinaryOp(LTEOp, body_e.expr_));
@@ -87,6 +88,7 @@ WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(*, ToBinaryOp(c, MulOp, body_e.expr_));
 WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(/, ToBinaryOp(c, DivOp, body_e.expr_));
 WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(%, ToBinaryOp(c, ModOp, body_e.expr_));
 WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(==, ToBinaryOp(c, EQOp, body_e.expr_));
+WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(<<=, ToBinaryOp(c, IntEQOp, body_e.expr_));
 WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(!=, ToBinaryOp(c, NEQOp, body_e.expr_));
 WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(>=, ToBinaryOp(c, GTEOp, body_e.expr_));
 WHOOP_DEFINE_CONST_EXPR_BINARY_OPERATOR(<=, ToBinaryOp(c, LTEOp, body_e.expr_));
@@ -101,6 +103,7 @@ WHOOP_DEFINE_DERIVED_OPS(TreeBuilder)
 WHOOP_DEFINE_DERIVED_OPS(Var)
 WHOOP_DEFINE_DERIVED_OPS(TensorDisambiguator)
     
+
 
 void s_for(ast::PrimVar& v, const int& init_const, const int& end_const)
 {
@@ -245,7 +248,6 @@ void w_while(const int& test_const)
   w_if(TreeBuilder(const_expr));
 }
 
-
 void w_if(TreeBuilder test_expr)
 {
   ast::If* stmt = new ast::If(test_expr.expr_);
@@ -323,13 +325,13 @@ void end()
 }
 
 // Sub-classes must define these.
-ast::Expression* ToAccess(const int& c)
+ast::Expression* ToAccess(const DataType_t& c)
 {
    ast::Constant* const_expr = new ast::Constant(c);
    return const_expr;
 }
 
-ast::Statement* ToAssignment(const int& c, ast::Expression* body_e)
+ast::Statement* ToAssignment(const DataType_t& c, ast::Expression* body_e)
 {
   assert(false);
   return NULL;
@@ -337,7 +339,7 @@ ast::Statement* ToAssignment(const int& c, ast::Expression* body_e)
 
 
 // For things like --
-ast::Expression* ToUnaryOp(const int& c, int (*op)(const int& a))
+ast::Expression* ToUnaryOp(const DataType_t& c, DataType_t (*op)(const DataType_t& a))
 {
   ast::Expression* access_e = ToAccess(c);
   ast::UnaryOp* op_e = new ast::UnaryOp(op, access_e);
@@ -345,7 +347,7 @@ ast::Expression* ToUnaryOp(const int& c, int (*op)(const int& a))
 }
 
 // For things like *, +
-ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e)
+ast::Expression* ToBinaryOp(const DataType_t& c, DataType_t (*op)(const DataType_t& a, const DataType_t& b), ast::Expression* body_e)
 {
   ast::Expression* access_e = ToAccess(c);
   ast::BinaryOp* op_e = new ast::BinaryOp(op, access_e, body_e);
@@ -353,7 +355,7 @@ ast::Expression* ToBinaryOp(const int& c, int (*op)(const int& a, const int& b),
 }
 
 // For things like +=, *=
-ast::Statement* ToUpdateOp(const int& c, int (*op)(const int& a, const int& b), ast::Expression* body_e)
+ast::Statement* ToUpdateOp(const DataType_t& c, DataType_t (*op)(const DataType_t& a, const DataType_t& b), ast::Expression* body_e)
 {
   ast::Expression* plus_e = ToBinaryOp(c, op, body_e);
   ast::Statement* assign_stmt = ToAssignment(c, plus_e);

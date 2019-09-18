@@ -25,33 +25,48 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WHOOP_OPERATOR_SEMANTICS_HPP_
-#define WHOOP_OPERATOR_SEMANTICS_HPP_
+#include "whoop.hpp"
 
-#include "typedefs.hpp"
-
-namespace whoop
+//An output-stationary inner product 
+int main(int argc, char** argv)
 {
 
-  DataType_t PlusOp(const DataType_t& x, const DataType_t& y);
-  DataType_t MinusOp(const DataType_t& x, const DataType_t& y);
-  DataType_t MulOp(const DataType_t& x, const DataType_t& y);
-  DataType_t DivOp(const DataType_t& x, const DataType_t& y);
-  DataType_t ModOp(const DataType_t& x, const DataType_t& y);
-  DataType_t EQOp(const DataType_t&x , const DataType_t& y);
-  DataType_t IntEQOp(const DataType_t&x , const DataType_t& y);
-  DataType_t NEQOp(const DataType_t&x , const DataType_t& y);
-  DataType_t GTEOp(const DataType_t& x, const DataType_t& y);
-  DataType_t LTEOp(const DataType_t&x , const DataType_t& y);
-  DataType_t GTOp(const DataType_t& x, const DataType_t& y);
-  DataType_t LTOp(const DataType_t& x, const DataType_t& y);
-  DataType_t ANDOp(const DataType_t& x, const DataType_t& y);
-  DataType_t OROp(const DataType_t& x, const DataType_t& y);
-  DataType_t BWANDOp(const DataType_t& x, const DataType_t& y);
-  DataType_t BWOROp(const DataType_t& x, const DataType_t& y);
-  DataType_t NOPOp(const DataType_t& x, const DataType_t& y);
-  DataType_t POSTINCOp(const DataType_t& x);
-  DataType_t PREINCOp(const DataType_t& x);
-};
+  using namespace whoop;
+    
+  int p_size = 8; // vector size
 
-#endif
+  whoop::AddOption(&p_size, "size,s", "size of vector");
+
+  whoop::Init(argc, argv);
+
+  Tensor input_A("A"); //input vector A
+  Tensor input_B("B"); //input vector B
+  
+  const int SIZE = p_size; 
+
+  //set sizes (reversed ordering for whoop c*r)
+  input_A.Resize({SIZE});
+  input_B.Resize({SIZE});
+
+  whoop::T(0) << "Vector Size: "  << SIZE << whoop::EndT;
+  whoop::T(0) << whoop::EndT;
+
+  //matrix multiply and elewise
+  Var k("k");
+  Var output("output");
+
+  t_for(k, 0, SIZE);
+  {
+      output += input_A[k] * input_B[k]; //XXX * should be /
+  }
+  end();
+
+
+           
+  whoop::T(0) << "RUNNING..." << whoop::EndT;
+  whoop::Run();
+  whoop::T(0) << output.Size(0) << whoop::EndT;  // K
+
+
+  whoop::Done();
+}

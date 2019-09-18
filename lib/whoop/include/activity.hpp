@@ -153,7 +153,7 @@ class PatternGeneratorLog : public Log
 class ShrinkPatternGeneratorLog : public Log
 {
   int shrinks_ = 0;
-  int shrink_granularity_ = 1;
+  int shrink_threshold_ = 1;
   int fill_granularity_ = 1;
 
  public:
@@ -167,31 +167,37 @@ class ShrinkPatternGeneratorLog : public Log
     send_action.put("Params.val_", num);
     AddActivity(send_action);
   }
-  void Shrink(int num = 1)
+  void Shrink(int num)
   {
     if (!options::kShouldLogActivity) return;
     shrinks_ += num;
-    if (shrinks_ >= shrink_granularity_)
+    if (shrinks_ >= shrink_threshold_)
     {
-      EmitShrink(shrinks_ / fill_granularity_);
-      shrinks_ = 0;
+      int num_to_emit = shrinks_;
+      if (num_to_emit % fill_granularity_ != 0)
+      {
+        num_to_emit += fill_granularity_ - (num_to_emit % fill_granularity_);
+      }
+      EmitShrink(num_to_emit / fill_granularity_);
+      shrinks_ -= num_to_emit;
     }
   }
   
-  void SetShrinkGranularity(int g, int fill_gran)
+  void SetShrinkThreshold(int t, int g)
   {
-    shrink_granularity_ = g * fill_gran;
-    fill_granularity_ = fill_gran;
+    shrink_threshold_ = t;
+    fill_granularity_ = g;
   }
 };
 
 class BuffetCommandLog : public Log
 {
   int shrinks_ = 0;
-  int shrink_granularity_ = 1;
+  int shrink_threshold_ = 1;
+  int fill_granularity_ = 1;
   int last_idx_ = -1;
   int num_coalesces_ = 0;
-  int access_granularity_ = 1;
+  int access_threshold_ = 1;
   bool modified_ = false;
   int head_ = 0;
   int size_ = 0;
@@ -225,7 +231,7 @@ class BuffetCommandLog : public Log
     if (idx == last_idx_)
     {
       num_coalesces_++;
-      if (num_coalesces_ != access_granularity_)
+      if (num_coalesces_ != access_threshold_)
       {
         return true;
       }
@@ -261,11 +267,16 @@ class BuffetCommandLog : public Log
   {
     if (!options::kShouldLogActivity) return;
     shrinks_ += num;
-    if (shrinks_ >= shrink_granularity_)
+    if (shrinks_ >= shrink_threshold_)
     {
-      shrinks_ = 0;
+      int num_to_emit = shrinks_;
+      if (num_to_emit % fill_granularity_ != 0)
+      {
+        num_to_emit += fill_granularity_ - (num_to_emit % fill_granularity_);
+      }
       EmitShrink();
-      head_ += shrink_granularity_;
+      shrinks_ -= num_to_emit;
+      head_ += num_to_emit;
       if (head_ > size_)
       {
         head_ -= size_;
@@ -273,16 +284,17 @@ class BuffetCommandLog : public Log
     }
   }
   
-  void SetShrinkGranularity(int g, int fill_gran)
+  void SetShrinkThreshold(int t, int g)
   {
-    assert(g > 0);
-    shrink_granularity_ = g * fill_gran;
+    assert(t > 0);
+    shrink_threshold_ = t;
+    fill_granularity_ = g;
   }
 
-  void SetAccessGranularity(int g)
+  void SetAccessThreshold(int t)
   {
-    assert(g > 0);
-    access_granularity_ = g;
+    assert(t > 0);
+    access_threshold_ = t;
   }
   
   void SetModified()

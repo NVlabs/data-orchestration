@@ -26,7 +26,9 @@
 
 Import('env')
 
-subdirs = ['random-tensor-gen', 'print-tensor', 'encode-tensor-no-zeros', 'encode-tensor-no-zeros-sinkhornpycoo']
+subdirs = ['dense',
+           'sparse'
+          ]
 
 disabled = []
 

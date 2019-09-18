@@ -1,3 +1,4 @@
+#!/bin/sh
 # Copyright (c) 2017, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -24,12 +25,19 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Import('env')
+# Stop on errors
+set -e
+# build the executable
+scons -u -Q
 
-subdirs = ['random-tensor-gen', 'print-tensor', 'encode-tensor-no-zeros', 'encode-tensor-no-zeros-sinkhornpycoo']
+executable=./vector_dp.bin
 
-disabled = []
+if [ $# -eq 1 ]; then
+    size=$1
+else
+    size=8
+fi
 
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
-
+# Run the program with some interesting (and legal) default settings
+${executable} \
+  --size=$size 

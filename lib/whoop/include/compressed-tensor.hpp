@@ -35,6 +35,103 @@ namespace whoop
 
 class DomainIterator;
 class FullyConcordantScanner;
+class CompressedTensor;
+
+/*
+void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const);
+
+void t_scan(ast::PrimVar& v, const CompressedTensorFiber fiber)
+{
+  ast::TensorAccess* init_e = fiber.position_start_.ToTensorAccess();
+  ast::TensorAccess* end_e = fiber.position_end_.ToTensorAccess();
+  t_for(v, TreeBuilder(init_e), TreeBuilder(end_e));
+
+  void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr)
+{
+  // The initialization statement is always a var assignment for now.
+  ast::VarAssignment* init_s = new ast::VarAssignment(v, init_expr.expr_);
+  // The test is always less-than, non-inclusive
+  ast::VarAccess* test_v = new ast::VarAccess(v);
+  ast::BinaryOp* test_e = new ast::BinaryOp(LTOp, test_v, end_expr.expr_);
+  // The increment is always by 1.
+  ast::VarAccess* incr_v = new ast::VarAccess(v);
+  ast::Constant* incr_c = new ast::Constant(1);
+  ast::BinaryOp* incr_e = new ast::BinaryOp(PlusOp, incr_v, incr_c);
+  ast::VarAssignment* incr_s = new ast::VarAssignment(v, incr_e);
+
+  // Now put it all together.
+  // Neal this is what we need to modify to get everything working
+  //  NEAl looks like basically we need to have the element as a t_scan parameter (by reference &)
+  //then, we need to create ast::TemporalScan() statement and add it 
+  
+  // Final IDEA: basically, we need a regular for loop, and then change the return value
+
+  ast::TemporalFor* stmt = new ast::TemporalFor(init_s, test_e, incr_s);
+  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
+  the_program.AddIncomplete(stmt);
+
+}
+}
+
+class CompressedTensorFiber
+{
+  public:
+    int level_;
+    //segment array bounds
+    TensorDisambiguator position_start_;     
+    TensorDisambiguator position_end_;
+    CompressedTensor* tensor_;
+  public:
+    CompressedTensorFiber(CompressedTensor* tensor, int level, Var start, Var end) : tensor_(tensor), level_(level), position_start_(start), position_end_(end) {}
+
+  //build and return a particular element from this fiber
+  void GetElement(CompressedTensorFiberElement& element)
+  {
+      TensorDisambiguator start = (*tensor->coordinates_[level_+1])[zero_*0+0];
+      TensorDisambiguator end = (*tensor->coordinates_[level_+1])[zero_*0+1];
+      CompressedTensorFiber fiber = CompressedTensorFiber(this, 0, start, end);
+  }
+
+};
+
+class CompressedTensorFiberElement
+{
+
+public:
+
+public:
+    inline TensorDisambiguator GetCoordinate(int dim_arg, Var& pos )
+  {
+      std::cout << "  Coord: " << name_ << " " << dim_arg << std::endl;
+      //return (*(coordinates_[dim_arg]))[pos];
+      return (*this->coordinates_[dim_arg])[pos];
+  }
+
+  TensorDisambiguator GetValue( Var& pos )
+  {
+    std::cout << "  Value: " <<  name_ << std::endl;
+    return (*values_)[pos];
+  }
+
+  TensorDisambiguator SetValue( Var& pos )
+  {
+    std::cout << "  Value: " <<  name_ << std::endl;
+    return (*values_)[pos];
+  }
+
+  CompressedTensorFiber GetChildFiber()
+  {
+      TensorDisambiguator start = (*tensor->segments_[level_+1])[zero_*0+0];
+      TensorDisambiguator end = (*tensor->segments_[level_+1])[zero_*0+1];
+      CompressedTensorFiber fiber = CompressedTensorFiber(this, 0, start, end);
+      return fiber;
+  }
+
+
+  
+};
+
+*/
 
 class CompressedTensor
 {
@@ -57,23 +154,27 @@ class CompressedTensor
   std::vector<std::string>  dim_names_;
   std::vector<int>          last_inserted_coordinate_; // Last inserted point for sanity checking.
 
+  Var zero_; //dummy VAR for accessing sub tensors
+
  public:
 
   std::vector<std::shared_ptr<Vec>> segments_;
   std::vector<std::shared_ptr<Vec>> coordinates_;
   std::shared_ptr<Vec> values_;
 
-  CompressedTensor(const std::string& name, const std::vector<int>& dim_sizes, const std::vector<std::string>& dim_names, long nnz, const Type& my_type = Type::Normal) :
+  CompressedTensor(const std::string& name, const int num_dims, const std::vector<int>& dim_sizes, const std::vector<std::string>& dim_names, long nnz, const Type& my_type = Type::Normal) :
     name_(name),
     my_type_(my_type),
-    num_dims_(dim_sizes.size()),
+    num_dims_(num_dims),
     dim_sizes_(dim_sizes),
     dim_names_(dim_names),
     last_inserted_coordinate_(dim_sizes_.size(), -1),
-    coordinates_(dim_sizes_.size(), NULL),
-    segments_(dim_sizes_.size(), NULL)
+    zero_("zero_dummy"),
+    coordinates_(num_dims, NULL),
+    segments_(num_dims, NULL)
   {
     //if (my_type_ != Type::Out) Neal: we need to init output as well (have override for init)
+      
       Init(nnz);        
   }
 
@@ -428,7 +529,7 @@ class CompressedTensor
       return false;
   }
 
-
+  // -- DIRECT ACCESSORS --
   int AddSegment( int dim_arg, int pos )
   {
       return segments_[dim_arg]->At( {pos} );
@@ -507,7 +608,18 @@ class CompressedTensor
     return (*values_)[pos];
   }
 
+/*
+  // -- DSL ACCESSORS
+  CompressedTensorFiber GetRootFiber()
+  {
+      TensorDisambiguator start = (*this->coordinates_[dim_arg])[zero_*0+0];
+      TensorDisambiguator end = (*this->coordinates_[dim_arg])[zero_*0+1];
+      CompressedTensorFiber fiber = CompressedTensorFiber(this, 0, start, end);
+      return fiber;
+  }
+*/
 
+  // -- ADD TILE LEVELS --
   void AddSegmentTileLevel(int dim_arg, int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
   {
      (*segments_[dim_arg]).AddTileLevel(size, shrink_granularity, granularity, port);
@@ -529,7 +641,7 @@ class CompressedTensor
   
   friend class boost::serialization::access;
 
-  template<class Archive>
+/*  template<class Archive>
   void serialize(Archive & ar, const unsigned int version)
   {
     ar & num_dims_;
@@ -545,8 +657,38 @@ class CompressedTensor
     ar & segments_;
     ar & coordinates_;
     ar & values_;
-  }
+  }*/
   
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version)
+  {
+//      ar & num_dims_; constructor must provide, used for checking later
+      ar & nnz_in_;
+
+      ar & dim_sizes_;
+      ar & dim_names_;
+
+      ar & last_inserted_coordinate_;
+
+    // Note: serialization of std::shared_ptr by default serializes
+    // the underlying object correctly. Thanks boost!
+
+      for (int x = 0; x < num_dims_; x++)
+      {  
+          ar & segments_[x]->dim_sizes_;
+          ar & segments_[x]->vals_;
+      }
+
+      for (int x = 0; x < num_dims_; x++)
+      {  
+          ar & coordinates_[x]->dim_sizes_;
+          ar & coordinates_[x]->vals_;
+      }
+
+      ar & values_->dim_sizes_;
+      ar & values_->vals_;
+      
+  }  
 };
 
 class CompressedTensorIn : public CompressedTensor, public InFromFile
@@ -554,8 +696,8 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
  public:
   std::string filename_;
  
-  CompressedTensorIn(const std::string& nm) :
-    CompressedTensor(nm, {}, {}, 0)
+  CompressedTensorIn(const std::string& nm, const int num_dims) :
+    CompressedTensor(nm, num_dims, {}, {}, 0)
   {
     filename_ = nm + ".in.txt";
     AddOption(&filename_, "tensor_" + nm + "_file", "Input datafile name for CompressedTensorIn " + nm);
@@ -588,16 +730,15 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
     ia >> (*this);
     TrimFat();
 
+    assert(dim_sizes_.size() == num_dims_ && "ReadInput: Compressed Tensor mismatch!");
 
-    std::cout << "ReadInput after for " << name_ << " num_dims_ " << num_dims_ << std::endl;
     for (int x = 0; x < num_dims_; x++)
     {
-
-      std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
-      segments_[x]->AppendToName(name_ + "_segments_" + std::to_string(x));
-      coordinates_[x]->AppendToName(name_ + "_coordinates_" + std::to_string(x));
+      std::cout << "  fixing up buffermodel sizes" << std::endl;
+      segments_[x]->FixupSize();
+      coordinates_[x]->FixupSize();
     }
-    values_->AppendToName(name_ + "_values");
+    values_->FixupSize();
   }
 };
 
@@ -607,8 +748,8 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
   std::string filename_;
   std::string ref_filename_;
 
-  CompressedTensorOut(const std::string& name) :
-     CompressedTensor(name, {}, {}, 0, Type::Out) 
+  CompressedTensorOut(const std::string& name, const int num_dims) :
+     CompressedTensor(name, num_dims, {}, {}, 0, Type::Out) 
   {
     Init(); //Neal calls local Init only
   }
@@ -641,14 +782,18 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
     boost::archive::text_iarchive ia(ifs);
     ia >> (*this);
     TrimFat();
+
+    assert(dim_sizes_.size() == num_dims_ && "ReadInput: Compressed Tensor mismatch!");
+
+
     for (int x = 0; x < num_dims_; x++)
     {
-
-      std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
-      segments_[x]->AppendToName(name_ + "_segments_" + std::to_string(x));
-      coordinates_[x]->AppendToName(name_ + "_coordinates_" + std::to_string(x));
+      std::cout << "  fixing up buffermodel sizes" << std::endl;
+      segments_[x]->FixupSize();
+      coordinates_[x]->FixupSize();
     }
-    values_->AppendToName(name_ + "_values");
+    values_->FixupSize();
+
   }
 
   
