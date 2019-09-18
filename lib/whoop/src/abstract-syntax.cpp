@@ -326,11 +326,12 @@ bool HaveDirectRoute(const BindingTarget& src, const BindingTarget& dst)
 
 int GetSwitchAddress(const BindingTarget& src)
 {
+  //out: update (0), fill (1), gate (2)
   int level = src.GetLevel();
   int result = 0;
   for (int x = 0; x < level; x++)
   {
-    result += default_bindings[x].GetIndex();
+    result += default_bindings[x].GetIndex() * 3;
   }
   return result;
 }

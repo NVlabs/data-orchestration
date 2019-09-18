@@ -40,7 +40,8 @@ subdirs = ['reference',
            'tiled/output-weight',
            'tiled/output-weight-output',
            'tiled/weight-output-weight-output',
-           'parallel-tiled/outputS-weight-output']
+           'parallel-tiled/outputS-weight-output',
+           'parallel-tiled/5level']
 
 disabled = []
 

@@ -510,7 +510,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
         ostr << "         physical_connection_name: read_out_" << binding_.GetExpansionFactor() + 1 << std::endl;
         ostr << "       - physical_module_name: system:SW_0" << std::endl;
-        ostr << "         physical_connection_name: connections_out_" << GetSwitchAddress(fronting_buffers_[dst_idx]->binding_) << std::endl;
+        ostr << "         physical_connection_name: connections_out_" << GetSwitchAddress(fronting_buffers_[dst_idx]->binding_) + 1 << std::endl;
         ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
         ostr << "         physical_connection_name: fill_in_1" << std::endl;      
       }
@@ -557,7 +557,12 @@ class BufferModel : public StatsCollection, public TraceableBuffer
         int dp_idx = spatial_idx * num_dpaths + x;
         if (compute_bindings[tile_level][dp_idx].IsDisabled()) continue;
         BindingTarget dst_binding = compute_bindings[tile_level][dp_idx];
-        ASSERT_WARNING(binding_.GetLevel() == dst_binding.GetLevel()) << "Generating incorrect route to non-local CECC. Logical Src: " << Traceable::GetName() << ", Physical Src: " << binding_.ToString() << ", Logical Dst: " << GetComputeBoundName(tile_level, dp_idx) << ", Physical Dst: " << dst_binding.ToString() << ". The YAML will need manual fixing." << EndT;
+        ASSERT_WARNING(binding_.GetLevel() == dst_binding.GetLevel()) << "Attempted route to non-local CECC. Logical Src: " << Traceable::GetName() << ", Physical Src: " << binding_.ToString() << ", Logical Dst: " << GetComputeBoundName(tile_level, dp_idx) << ", Physical Dst: " << dst_binding.ToString() << ". YAML may be incorrect." << EndT;
+        if (binding_.GetLevel() != dst_binding.GetLevel())
+        {
+          local_dp_index++;
+          continue;
+        }
         // Does it go to the local datapath, or to the network?
         int phys_idx = compute_bindings[tile_level][dp_idx] == binding_ ? 0 : fronting_buffers_.size();
         ostr << " - Route:" << std::endl;
