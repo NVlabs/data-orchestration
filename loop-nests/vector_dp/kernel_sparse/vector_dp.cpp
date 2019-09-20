@@ -34,38 +34,26 @@ int main(int argc, char** argv)
 
   using namespace whoop;
 
-  CompressedTensorIn input_A("input_a"); //input vector a
-  CompressedTensorIn input_B("input_b"); //input vector b
+  CompressedTensorIn input_A("input_a", 1); //input vector a - must provide num_dims as secondary parameter
+  CompressedTensorIn input_B("input_b", 1); //input vector b - must provide num_dims as secondary parameter
 
   whoop::Init(argc, argv);
  
   whoop::ASSERT(input_A.Size(0) == input_B.Size(0)) << "The input vectors are of different sizes! A size: " << input_A.Size(0) << ", B size: " << input_B.Size(0) << whoop::EndT;
   const int SIZE = input_A.Size(0); // vector size (shared
 
-  whoop::T(0) << "Vector Sizer: "  << SIZE << whoop::EndT;
+  whoop::T(0) << "Vector Size: "  << SIZE << whoop::EndT;
   whoop::T(0) << whoop::EndT;
 
   Var a_pos("apos");
-  Var a_k("ak");
+  Var a_coord("ak");
 
   Var b_pos("bpos");
-  Var b_k("bk");
+  Var b_coord("bk");
 
   Var output("output");
-  /*
-k2_pa = a.GetSegStart(“K2”, 0);
-k2_pb = b.GetSegStart(“K2”, n2_p);
-w_while (k2_pa < a.GetSegEnd(“K2”, 0) &&
-         k2_pb < b.GetSegEnd(“K2”, n2_p));
-  k2_a = a.GetCoord(“K2”, k2_pa);
-  k2_b = b.GetCoord(“K2”, k2_pb);
-  w_if (k2_a < k2_b);
-    k2_pa++;
-  w_else_if (k2_b < k2_a);
-    k2_pb++;
-  w_else();
-    <BODY>
-*/
+  output = 0;
+
   //perform intersection on A and B
   //intialize 
   a_pos = input_A.GetSegmentBeginAt(0,0);
@@ -80,17 +68,17 @@ w_while (k2_pa < a.GetSegEnd(“K2”, 0) &&
       //check to see which way we advance
       w_if(a_coord < b_coord);
       {
-          a_pos++;
+          a_pos+=1;
       }
       w_else_if(a_coord > b_coord);
       {
-          b_pos++;
+          b_pos+=1;
       }
       w_else();
       {
           output += input_A.GetValue(a_pos)*input_B.GetValue(b_pos); 
-          a_pos++;
-          b_pos++;
+          a_pos+=1;
+          b_pos+=1;
       }
       end();
   }
@@ -98,7 +86,6 @@ w_while (k2_pa < a.GetSegEnd(“K2”, 0) &&
            
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
-
-
+  whoop::T(0) << "output of dot product:" << output.Access(0,0) << whoop::EndT;  // K
   whoop::Done();
 }

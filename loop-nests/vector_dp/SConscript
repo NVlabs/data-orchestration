@@ -26,8 +26,8 @@
 
 Import('env')
 
-subdirs = ['dense',
-           'sparse'
+subdirs = ['kernel_dense',
+           'kernel_sparse'
           ]
 
 disabled = []
