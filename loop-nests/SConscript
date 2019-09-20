@@ -40,7 +40,8 @@ subdirs = ['conv1d',
            'convnet',
            'graphsage',
            'sinkhorn-wmd',
-           'recsys']
+           'recsys',
+           'vector_dp']
 
 disabled = []
 
