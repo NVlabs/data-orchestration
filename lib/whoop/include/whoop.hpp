@@ -917,6 +917,8 @@ class TensorIn : public Tensor, public InFromFile
   void ReadInput(bool is_ref = false)
   {
     std::ifstream ifs;
+    std::cout << "Reading TensorIn file: " << filename_ << std::endl;
+    
     ifs.open(filename_);
     if (ifs.fail())
     {

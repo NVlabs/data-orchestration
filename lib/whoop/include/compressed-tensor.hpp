@@ -317,13 +317,13 @@ class CompressedTensor
   {
       int dim = num_dims_ - 1;        
       int kSegSize, kCoordSize, prev_kCoordSize;
-      std::cout << "compressed tensor init for " << name_ << " num_dims_ " << num_dims_ << std::endl;
+      //std::cout << "compressed tensor init for " << name_ << " num_dims_ " << num_dims_ << std::endl;
       values_ = std::shared_ptr<Vec>(new Vec(name_ + "_values"));
 
       for (int x = 0; x < num_dims_; x++)
       {
 
-        std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
+        //std::cout << "  creating structures for " << name_ << " dim " << x << std::endl;
         segments_[x] = std::shared_ptr<Vec>(new Vec(name_ + "_segments_" + std::to_string(x)));
         coordinates_[x] = std::shared_ptr<Vec>(new Vec(name_ + "_coordinates_" + std::to_string(x)));
       }
@@ -584,7 +584,7 @@ class CompressedTensor
 
   inline TensorDisambiguator GetCoordinate(int dim_arg, Var& pos )
   {
-      std::cout << "  Coord: " << name_ << " " << dim_arg << std::endl;
+      //std::cout << "  Coord: " << name_ << " " << dim_arg << std::endl;
       //return (*(coordinates_[dim_arg]))[pos];
       return (*this->coordinates_[dim_arg])[pos];
   }
@@ -598,13 +598,13 @@ class CompressedTensor
 
   TensorDisambiguator GetValue( Var& pos )
   {
-    std::cout << "  Value: " <<  name_ << std::endl;
+    //std::cout << "  Value: " <<  name_ << std::endl;
     return (*values_)[pos];
   }
 
   TensorDisambiguator SetValue( Var& pos )
   {
-    std::cout << "  Value: " <<  name_ << std::endl;
+    //std::cout << "  Value: " <<  name_ << std::endl;
     return (*values_)[pos];
   }
 
@@ -662,7 +662,7 @@ class CompressedTensor
   template<class Archive>
   void serialize(Archive & ar, const unsigned int version)
   {
-//      ar & num_dims_; constructor must provide, used for checking later
+      ar & num_dims_; //constructor must provide, used for checking later
       ar & nnz_in_;
 
       ar & dim_sizes_;
@@ -707,7 +707,9 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
   void ReadInput(bool is_ref = false)
   {
 
-      std::cout << "ReadInput before for " << name_ << " num_dims_ " << num_dims_ << std::endl;
+    //std::cout << "ReadInput before  " << name_ << " num_dims_ " << num_dims_ << std::endl;
+    std::cout << "Reading TensorIn file: " << filename_ << std::endl;
+
     std::ifstream ifs;
     ifs.open(filename_);
     if (ifs.fail())
@@ -728,13 +730,16 @@ class CompressedTensorIn : public CompressedTensor, public InFromFile
     }
     boost::archive::text_iarchive ia(ifs);
     ia >> (*this);
+
+    //std::cout << "ReadInput after " << name_ << " num_dims_ " << num_dims_ << std::endl;
+
     TrimFat();
 
     assert(dim_sizes_.size() == num_dims_ && "ReadInput: Compressed Tensor mismatch!");
 
     for (int x = 0; x < num_dims_; x++)
     {
-      std::cout << "  fixing up buffermodel sizes" << std::endl;
+      //std::cout << "  fixing up buffermodel sizes" << std::endl;
       segments_[x]->FixupSize();
       coordinates_[x]->FixupSize();
     }
@@ -748,7 +753,7 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
   std::string filename_;
   std::string ref_filename_;
 
-  CompressedTensorOut(const std::string& name, const int num_dims) :
+  CompressedTensorOut(const std::string& name, const int num_dims = 0) :
      CompressedTensor(name, num_dims, {}, {}, 0, Type::Out) 
   {
     Init(); //Neal calls local Init only

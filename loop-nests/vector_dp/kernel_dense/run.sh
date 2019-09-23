@@ -32,12 +32,8 @@ scons -u -Q
 
 executable=./vector_dp.bin
 
-if [ $# -eq 1 ]; then
-    size=$1
-else
-    size=8
-fi
-
 # Run the program with some interesting (and legal) default settings
 ${executable} \
-  --size=$size 
+  --tensor_input_a_file=../input/vectorA_16_dense.in.txt \
+  --tensor_input_b_file=../input/vectorB_16_dense.in.txt 
+

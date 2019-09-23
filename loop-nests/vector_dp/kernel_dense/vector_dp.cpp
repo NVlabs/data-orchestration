@@ -33,20 +33,13 @@ int main(int argc, char** argv)
 
   using namespace whoop;
     
-  int p_size = 8; // vector size
-
-  whoop::AddOption(&p_size, "size,s", "size of vector");
-
+  TensorIn input_A("input_a"); //input vector A
+  TensorIn input_B("input_b"); //input vector B
+  
   whoop::Init(argc, argv);
 
-  Tensor input_A("A"); //input vector A
-  Tensor input_B("B"); //input vector B
-  
-  const int SIZE = p_size; 
-
-  //set sizes (reversed ordering for whoop c*r)
-  input_A.Resize({SIZE});
-  input_B.Resize({SIZE});
+  whoop::ASSERT(input_A.Size(0) == input_B.Size(0)) << "The input vectors are of different sizes! A size: " << input_A.Size(0) << ", B size: " << input_B.Size(0) << whoop::EndT;
+  const int SIZE = input_A.Size(0); // vector size (shared
 
   whoop::T(0) << "Vector Size: "  << SIZE << whoop::EndT;
   whoop::T(0) << whoop::EndT;
@@ -54,7 +47,7 @@ int main(int argc, char** argv)
   //matrix multiply and elewise
   Var k("k");
   Var output("output");
-
+  output = 0;
   t_for(k, 0, SIZE);
   {
       output += input_A[k] * input_B[k]; //XXX * should be /
@@ -65,7 +58,7 @@ int main(int argc, char** argv)
            
   whoop::T(0) << "RUNNING..." << whoop::EndT;
   whoop::Run();
-  whoop::T(0) << output.Size(0) << whoop::EndT;  // K
+  whoop::T(0) << "output of dot product:" << output.Access(0,0) << whoop::EndT;  // K
 
 
   whoop::Done();
