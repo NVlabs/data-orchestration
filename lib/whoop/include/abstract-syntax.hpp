@@ -125,6 +125,8 @@ void AddPhysicalBufferMap(const BindingTarget& target, const std::string& logica
 void LogPhysicalMap(std::ostream& ostr, bool is_compute, std::multimap<BindingTarget, std::string>& phsyical_map);
 int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst);
 void SetComputeWidth(int level, int spatial_idx, int granularity);
+bool HaveDirectRoute(const BindingTarget& src, const BindingTarget& dst);
+int GetSwitchAddress(const BindingTarget& src);
 
 namespace buff
 {
@@ -484,6 +486,7 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       if (fronting_buffers_[dst_idx]->binding_.IsDisabled()) continue;
       // The buffer feeds another (usually smaller) buffer.
       // Does it go to a direct connection, or to the network?
+      auto dst_binding = fronting_buffers_[dst_idx]->binding_;
       int phys_idx = GetPhysicalIndex(binding_, fronting_buffers_[dst_idx]->binding_);
       ostr << " - Route:" << std::endl;
       ostr << "   - Circuit_id: 0" << std::endl;
@@ -495,10 +498,22 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       ostr << "       logical_name: " << fronting_buffers_[dst_idx]->Traceable::GetName() << std::endl;
       ostr << "       logical_connection: fill_data_in_0" << std::endl;
       ostr << "     physical_data_path:" << std::endl;
-      ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
-      ostr << "         physical_connection_name: read_out_" << phys_idx << std::endl;
-      ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
-      ostr << "         physical_connection_name: fill_in_0" << std::endl;
+      if (HaveDirectRoute(binding_, dst_binding))
+      {
+        ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: read_out_" << phys_idx << std::endl;
+        ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: fill_in_0" << std::endl;
+      }
+      else
+      {
+        ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: read_out_" << binding_.GetExpansionFactor() + 1 << std::endl;
+        ostr << "       - physical_module_name: system:SW_0" << std::endl;
+        ostr << "         physical_connection_name: connections_out_" << GetSwitchAddress(fronting_buffers_[dst_idx]->binding_) + 1 << std::endl;
+        ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: fill_in_1" << std::endl;      
+      }
       ostr << std::endl;
       ostr << " - Route:" << std::endl;
       ostr << "   - Circuit_id: 1" << std::endl;
@@ -510,10 +525,22 @@ class BufferModel : public StatsCollection, public TraceableBuffer
       ostr << "       logical_name: " << Traceable::GetName() << std::endl;
       ostr << "       logical_connection: update_data_in_" << dst_idx << std::endl;
       ostr << "     physical_data_path:" << std::endl;
-      ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
-      ostr << "         physical_connection_name: drain_out_0" << std::endl;
-      ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
-      ostr << "         physical_connection_name: update_in_" << phys_idx << std::endl;
+      if (HaveDirectRoute(binding_, dst_binding))
+      {
+        ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: drain_out_0" << std::endl;
+        ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: update_in_" << phys_idx << std::endl;
+      }
+      else
+      {
+        ostr << "       - physical_module_name: system:" << fronting_buffers_[dst_idx]->binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: drain_out_1" << std::endl;
+        ostr << "       - physical_module_name: system:SW_0" << std::endl;
+        ostr << "         physical_connection_name: connections_out_" << GetSwitchAddress(binding_) << std::endl;
+        ostr << "       - physical_module_name: system:" << binding_.ToString() << "-BCC" << std::endl;
+        ostr << "         physical_connection_name: update_in_" << binding_.GetExpansionFactor() + 1 << std::endl;
+      }
       ostr << std::endl;
     }
     

@@ -318,6 +318,26 @@ int GetPhysicalIndex(const BindingTarget& src, const BindingTarget& dst)
   }
 }
 
+bool HaveDirectRoute(const BindingTarget& src, const BindingTarget& dst)
+{
+  return (src.GetLevel() + 1 == dst.GetLevel()) || 
+         (dst.GetLevel() + 1 == src.GetLevel());
+}
+
+int GetSwitchAddress(const BindingTarget& dst)
+{
+  //out: update (0), fill (1), gate (2)
+  int level = dst.GetLevel();
+  int result = 0;
+  for (int x = 0; x < level; x++)
+  {
+    result += default_bindings[x].GetIndex() * 3;
+  }
+  result += dst.GetIndex() * 3;
+  return result;
+}
+
+
 namespace buff
 {
 int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int num_spatial_partitions )
@@ -326,7 +346,8 @@ int GetBufIndex( int curr_spatial_idx, int buffs_at_level, int num_spatial_parti
   {
     return curr_spatial_idx;
   }
-  return std::min( curr_spatial_idx / (num_spatial_partitions/buffs_at_level),  buffs_at_level - 1);
+  // Keep neighbors contiguous but spread out any remainder....
+  return (curr_spatial_idx / (num_spatial_partitions/buffs_at_level)) % buffs_at_level;
 }
     
 } // end namespace buff

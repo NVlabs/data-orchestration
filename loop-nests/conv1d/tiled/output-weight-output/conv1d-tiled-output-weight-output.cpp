@@ -90,7 +90,7 @@ int main(int argc, char** argv)
   t_for(q1, 0, Q1);
   {
     inputs.AddTileLevel(Q0, 1);
-    weights.AddTileLevel(1);
+    weights.BypassTileLevel();
     outputs.AddTileLevel(Q0);
     t_for(s1, 0, S1);
     {
