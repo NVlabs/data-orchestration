@@ -26,9 +26,8 @@
 
 Import('env')
 
-subdirs = ['kernel_dense',
-           'kernel_sparse',
-           'kernel_intersection'
+subdirs = ['kernel_base',
+           'kernel_scan'
           ]
 
 disabled = []

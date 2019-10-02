@@ -37,40 +37,12 @@ class DomainIterator;
 class FullyConcordantScanner;
 class CompressedTensor;
 
-/*
-void t_for(ast::PrimVar& v, const TensorDisambiguator& init_const, const TensorDisambiguator& end_const);
-
-void t_scan(ast::PrimVar& v, const CompressedTensorFiber fiber)
+//provides end for two levels at once
+// - used for intersect and union
+void end_merge()
 {
-  ast::TensorAccess* init_e = fiber.position_start_.ToTensorAccess();
-  ast::TensorAccess* end_e = fiber.position_end_.ToTensorAccess();
-  t_for(v, TreeBuilder(init_e), TreeBuilder(end_e));
-
-  void t_for(ast::PrimVar& v, TreeBuilder init_expr, TreeBuilder end_expr)
-{
-  // The initialization statement is always a var assignment for now.
-  ast::VarAssignment* init_s = new ast::VarAssignment(v, init_expr.expr_);
-  // The test is always less-than, non-inclusive
-  ast::VarAccess* test_v = new ast::VarAccess(v);
-  ast::BinaryOp* test_e = new ast::BinaryOp(LTOp, test_v, end_expr.expr_);
-  // The increment is always by 1.
-  ast::VarAccess* incr_v = new ast::VarAccess(v);
-  ast::Constant* incr_c = new ast::Constant(1);
-  ast::BinaryOp* incr_e = new ast::BinaryOp(PlusOp, incr_v, incr_c);
-  ast::VarAssignment* incr_s = new ast::VarAssignment(v, incr_e);
-
-  // Now put it all together.
-  // Neal this is what we need to modify to get everything working
-  //  NEAl looks like basically we need to have the element as a t_scan parameter (by reference &)
-  //then, we need to create ast::TemporalScan() statement and add it 
-  
-  // Final IDEA: basically, we need a regular for loop, and then change the return value
-
-  ast::TemporalFor* stmt = new ast::TemporalFor(init_s, test_e, incr_s);
-  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
-  the_program.AddIncomplete(stmt);
-
-}
+    end(); //body
+    end(); //loop
 }
 
 class CompressedTensorFiber
@@ -82,56 +54,11 @@ class CompressedTensorFiber
     TensorDisambiguator position_end_;
     CompressedTensor* tensor_;
   public:
-    CompressedTensorFiber(CompressedTensor* tensor, int level, Var start, Var end) : tensor_(tensor), level_(level), position_start_(start), position_end_(end) {}
-
-  //build and return a particular element from this fiber
-  void GetElement(CompressedTensorFiberElement& element)
-  {
-      TensorDisambiguator start = (*tensor->coordinates_[level_+1])[zero_*0+0];
-      TensorDisambiguator end = (*tensor->coordinates_[level_+1])[zero_*0+1];
-      CompressedTensorFiber fiber = CompressedTensorFiber(this, 0, start, end);
-  }
+    CompressedTensorFiber(CompressedTensor* tensor, int level, TensorDisambiguator start, TensorDisambiguator end) : tensor_(tensor), level_(level), position_start_(start), position_end_(end) {}
 
 };
 
-class CompressedTensorFiberElement
-{
 
-public:
-
-public:
-    inline TensorDisambiguator GetCoordinate(int dim_arg, Var& pos )
-  {
-      std::cout << "  Coord: " << name_ << " " << dim_arg << std::endl;
-      //return (*(coordinates_[dim_arg]))[pos];
-      return (*this->coordinates_[dim_arg])[pos];
-  }
-
-  TensorDisambiguator GetValue( Var& pos )
-  {
-    std::cout << "  Value: " <<  name_ << std::endl;
-    return (*values_)[pos];
-  }
-
-  TensorDisambiguator SetValue( Var& pos )
-  {
-    std::cout << "  Value: " <<  name_ << std::endl;
-    return (*values_)[pos];
-  }
-
-  CompressedTensorFiber GetChildFiber()
-  {
-      TensorDisambiguator start = (*tensor->segments_[level_+1])[zero_*0+0];
-      TensorDisambiguator end = (*tensor->segments_[level_+1])[zero_*0+1];
-      CompressedTensorFiber fiber = CompressedTensorFiber(this, 0, start, end);
-      return fiber;
-  }
-
-
-  
-};
-
-*/
 
 class CompressedTensor
 {
@@ -608,16 +535,16 @@ class CompressedTensor
     return (*values_)[pos];
   }
 
-/*
+
   // -- DSL ACCESSORS
   CompressedTensorFiber GetRootFiber()
   {
-      TensorDisambiguator start = (*this->coordinates_[dim_arg])[zero_*0+0];
-      TensorDisambiguator end = (*this->coordinates_[dim_arg])[zero_*0+1];
+      TensorDisambiguator start = (*this->segments_[0])[zero_*0+0];
+      TensorDisambiguator end = (*this->segments_[0])[zero_*0+1];
       CompressedTensorFiber fiber = CompressedTensorFiber(this, 0, start, end);
       return fiber;
   }
-*/
+
 
   // -- ADD TILE LEVELS --
   void AddSegmentTileLevel(int dim_arg, int size, int shrink_granularity = 0, int granularity = 1, int port = 0)
@@ -849,6 +776,199 @@ class CompressedTensorOut : public CompressedTensor, OutToFile
 };
 
 
+class CompressedTensorFiberElement
+{
+
+public:
+    
+    CompressedTensor* tensor_;
+    int level_;
+    Var position_;
+    Var dummy_;
+
+private:
+
+    std::string name_;
+
+public:
+    CompressedTensorFiberElement(std::string name) :  name_(name), position_(name + ".position_"), dummy_(name + ".dummy_") {}
+
+    inline TensorDisambiguator GetCoordinate()
+    {
+        std::cout << "  Coord: " << tensor_->name_ << " " << level_ << std::endl;
+        return (*tensor_->coordinates_[level_])[position_];
+    }
+
+    TensorDisambiguator GetValue()
+    {
+        std::cout << "  Value: " <<  tensor_->name_ << std::endl;
+        return (*tensor_->values_)[position_];
+    }
+
+    TensorDisambiguator SetValue()
+    {
+        std::cout << "  Value: " <<  tensor_->name_ << std::endl;
+        return (*tensor_->values_)[position_];
+    }
+
+    CompressedTensorFiber GetChildFiber()
+    {
+        TensorDisambiguator start = (*tensor_->segments_[level_+1])[position_];
+        TensorDisambiguator end = (*tensor_->segments_[level_+1])[position_+1];
+        CompressedTensorFiber fiber = CompressedTensorFiber(tensor_, level_+1, start, end);
+        return fiber;
+    }
+
+/*     IsValid()
+    {
+        return (position_ < 0);
+    }
+*/
+  
+};
+
+
+
+//t_scan()
+// essentially a wrapper for t_for, with some extra stuff
+//Remove Var "v_pos" which is curr fiber pos, embed into fiber data structure somehow
+void t_scan(CompressedTensorFiberElement& element, const CompressedTensorFiber fiber)
+{
+
+  //XXX Neal: four statements to set up t_for parameters
+  ast::TensorAccess* init_e = fiber.position_start_.ToTensorAccess();
+  ast::TensorAccess* end_e = fiber.position_end_.ToTensorAccess();  
+  TreeBuilder init_expr = TreeBuilder(init_e);
+  TreeBuilder end_expr = TreeBuilder(end_e);
+
+  //XXX Neal: old t_for code from Whoop
+  // The initialization statement is always a var assignment for now.
+  ast::VarAssignment* init_s = new ast::VarAssignment(element.position_, init_expr.expr_);
+  // The test is always less-than, non-inclusive
+  ast::VarAccess* test_v_pos = new ast::VarAccess(element.position_);
+  ast::BinaryOp* test_e = new ast::BinaryOp(LTOp, test_v_pos, end_expr.expr_);
+  // The increment is always by 1.
+  ast::VarAccess* incr_v_pos = new ast::VarAccess(element.position_);
+  ast::Constant* incr_c = new ast::Constant(1);
+  ast::BinaryOp* incr_e = new ast::BinaryOp(PlusOp, incr_v_pos, incr_c);
+  ast::VarAssignment* incr_s = new ast::VarAssignment(element.position_, incr_e);
+
+  ast::TemporalFor* stmt = new ast::TemporalFor(init_s, test_e, incr_s);
+  spatial_partition_levels.push_back(std::pair<ast::SpatialFor*, int>(NULL, 1));
+  the_program.AddIncomplete(stmt);
+
+  //XXX Neal: for statement setup has been complete
+  //  - body starts below.  
+  //  - first step is to build up the struct for the element to what it should hold,
+  //      using Var "var" v_pos
+  element.tensor_ = fiber.tensor_; // CompressedTensor*
+  element.level_  = fiber.level_;  // int
+}
+
+void w_intersect(CompressedTensorFiberElement& element_a, CompressedTensorFiberElement& element_b, const CompressedTensorFiber fiber_a, const CompressedTensorFiber fiber_b)
+{
+  //perform intersection on A and B
+  //intialize the elements
+  element_a.tensor_ = fiber_a.tensor_; // CompressedTensor*
+  element_a.level_  = fiber_a.level_;  // int
+  element_a.position_ = fiber_a.position_start_;
+  element_a.dummy_ = fiber_a.position_start_;
+
+  element_b.tensor_ = fiber_b.tensor_; // CompressedTensor*
+  element_b.level_  = fiber_b.level_;  // int
+  element_b.position_ = fiber_b.position_start_;
+  element_b.dummy_ = fiber_b.position_start_;
+
+  //scan through vector A and vector B simultaneous
+  w_while(element_a.dummy_ /*curr_position*/ < fiber_a.position_end_ && element_b.dummy_ /*curr_position*/ < fiber_b.position_end_); 
+  {
+      //set dummy_ value as curr position
+      element_a.position_ = element_a.dummy_;
+      element_b.position_ = element_b.dummy_;
+
+      //check to see which way we advance
+      w_if(element_a.GetCoordinate() < element_b.GetCoordinate());
+      {
+          element_a.dummy_+=1;
+      }
+      w_else_if(element_a.GetCoordinate() > element_b.GetCoordinate());
+      {
+          element_b.dummy_+=1;
+      }
+      w_else(); //main body
+      {
+          element_a.dummy_+=1;
+          element_b.dummy_+=1;
+      }
+      //end();
+  }
+  //end();
+
+  //Here's where magic happens. Note that we don't have end() statements for either the w_else or the w_while. 
+  //  That means when the user writes their own code, their statements start working as if they are 
+  //      still inside the w_else(body). This lets the programmer code up whatever work they'd like to do 
+  //      as they are still inside the loop
+  //  NOte that the {} for w_while and w_else don't actually do anything (other than scope implications)
+
+           
+}
+
+/*
+void w_union(CompressedTensorFiberElement& element_a, CompressedTensorFiberElement& element_b, const CompressedTensorFiber fiber_a, const CompressedTensorFiber fiber_b)
+{
+  //perform intersection on A and B
+  //intialize the elements
+  element_a.tensor_ = fiber_a.tensor_; // CompressedTensor*
+  element_a.level_  = fiber_a.level_;  // int
+  element_a.position_ = fiber_a.position_start_;
+  element_a.dummy_ = fiber_a.position_start_;
+
+  element_b.tensor_ = fiber_b.tensor_; // CompressedTensor*
+  element_b.level_  = fiber_b.level_;  // int
+  element_b.position_ = fiber_b.position_start_;
+  element_b.dummy_ = fiber_b.position_start_;
+
+  //scan through vector A and vector B simultaneous
+  w_while(element_a.dummy_ //curr_position// < fiber_a.position_end_ && element_b.dummy_ //curr_position// < fiber_b.position_end_); 
+  {
+      //set dummy_ value as curr position
+      element_a.position_ = element_a.dummy_;
+      element_b.position_ = element_b.dummy_;
+
+      //check to see which way we advance
+      w_if(element_a.GetCoordinate() < element_b.GetCoordinate());
+      {
+          element_a.dummy_+=1;
+      }
+      w_else_if(element_a.GetCoordinate() > element_b.GetCoordinate());
+      {
+          element_b.dummy_+=1;
+      }
+      w_else(); //main body
+      {
+          element_a.dummy_+=1;
+          element_b.dummy_+=1;
+      }
+      //end();
+  }
+  //end();
+
+  //Here's where magic happens. Note that we don't have end() statements for either the w_else or the w_while. 
+  //  That means when the user writes their own code, their statements start working as if they are 
+  //      still inside the w_else(body). This lets the programmer code up whatever work they'd like to do 
+  //      as they are still inside the loop
+  //  NOte that the {} for w_while and w_else don't actually do anything (other than scope implications)
+
+           
+}
+
+ w_union(a_element, a_is_valid, b_element, b_is_valid, input_A.GetRootFiber(), input_B.GetRootFiber()); //DBSIZE max
+
+  w_intersect(coord_intersect, a_element, b_element, input_A.GetRootFiber(), input_B.GetRootFiber()); //DBSIZE max
+*/
+/*
+
+
 using Point = std::vector<int>;
 using PointAndValue = std::pair<Point, int>;
 
@@ -865,17 +985,17 @@ class DomainIterator
   explicit DomainIterator(FullyConcordantScanner* s) : scanner_(s) {}
  
   bool operator !=(const DomainIterator& other);
-  /*
-  {
+  
+  //{
     // Purposely ignore other, it's a dummy.
-    return !scanner_->IsDone();
-  }*/
+  //  return !scanner_->IsDone();
+  //}
   
   void operator ++();
-  /*
-  {
-    current_ = scanner_->Advance();
-  }*/
+  
+  //{
+  //  current_ = scanner_->Advance();
+  //}
   
   PointAndValue operator *()
   {
@@ -890,12 +1010,12 @@ class FullyConcordantScanner
   // Target info
   CompressedTensor* target_;
   int num_dims_;
-/*
+
   // hyper-rectangle definition.
-  Point base_;
-  Point scope_;
-  Point tile_repeats_;
-*/
+  //Point base_;
+  //Point scope_;
+  //Point tile_repeats_;
+
   // Iteration state tracking.
   std::vector<int> cur_positions_;
   std::vector<int> cur_segment_bounds_;
@@ -904,21 +1024,21 @@ class FullyConcordantScanner
   FullyConcordantScanner(CompressedTensor* target) :
     target_(target),
     num_dims_(target->num_dims_),
-  /*  base_(num_dims_, 0),
-    scope_(target->Sizes()),
-    tile_repeats(num_dims_, 1),*/
+  //  base_(num_dims_, 0),
+  //  scope_(target->Sizes()),
+  //  tile_repeats(num_dims_, 1),
     cur_positions_(num_dims_),
     cur_segment_bounds_(num_dims_),
     cur_point_(num_dims_, 0)
   {
   }
-/*
-  void SetRepeat(const std::vector<int>& tile_repeats)
-  {
-    assert(tile_repeats.size() = cur_point_.size());
-    tile_repeats_ =  tile_repeats;
-  }
-*/
+
+//  void SetRepeat(const std::vector<int>& tile_repeats)
+//  {
+//    assert(tile_repeats.size() = cur_point_.size());
+//    tile_repeats_ =  tile_repeats;
+//  }
+
   DomainIterator begin()
   {
     cur_positions_[num_dims_ - 1] = 0;
@@ -966,7 +1086,6 @@ class FullyConcordantScanner
   
 };
 
-
 FullyConcordantScanner CompressedTensor::GetFullyConcordantScanner()
 {
   return FullyConcordantScanner(this);
@@ -984,5 +1103,7 @@ void DomainIterator::operator ++()
 {
   current_ = scanner_->Advance();
 }
+*/
+
 
 } // namespace whoop

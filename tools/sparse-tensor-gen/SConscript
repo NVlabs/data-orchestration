@@ -26,13 +26,9 @@
 
 Import('env')
 
-subdirs = ['kernel_dense',
-           'kernel_sparse',
-           'kernel_intersection'
-          ]
+sources = Split("""
+sparse-tensor-gen.cpp
+""")
 
-disabled = []
-
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+env.Program(target = 'sparse-tensor-gen.bin', source = sources)
 

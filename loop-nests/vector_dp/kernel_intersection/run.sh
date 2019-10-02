@@ -1,3 +1,4 @@
+#!/bin/sh
 # Copyright (c) 2017, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -24,15 +25,15 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Import('env')
+# Stop on errors
+set -e
+# build the executable
+scons -u -Q
 
-subdirs = ['kernel_dense',
-           'kernel_sparse',
-           'kernel_intersection'
-          ]
+executable=./vector_dp.bin
 
-disabled = []
-
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+# Run the program with some interesting (and legal) default settings
+${executable} \
+  --tensor_input_a_file=../input/vectorA_16_sparse.in.txt \
+  --tensor_input_b_file=../input/vectorB_16_sparse.in.txt 
 

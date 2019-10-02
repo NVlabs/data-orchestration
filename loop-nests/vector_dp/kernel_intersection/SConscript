@@ -26,13 +26,9 @@
 
 Import('env')
 
-subdirs = ['kernel_dense',
-           'kernel_sparse',
-           'kernel_intersection'
-          ]
+sources = Split("""
+vector_dp.cpp
+""")
 
-disabled = []
-
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+env.Program(target = 'vector_dp.bin', source = sources)
 
