@@ -4,6 +4,7 @@
 *.o
 *.a
 *.out
+*.pyc
 .sconsign.dblite
 cpplint.out
 .nfs*

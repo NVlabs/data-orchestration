@@ -1,0 +1,107 @@
+#/* Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# *
+# * Redistribution and use in source and binary forms, with or without
+# * modification, are permitted provided that the following conditions
+# * are met:
+# *  * Redistributions of source code must retain the above copyright
+# *    notice, this list of conditions and the following disclaimer.
+# *  * Redistributions in binary form must reproduce the above copyright
+# *    notice, this list of conditions and the following disclaimer in the
+# *    documentation and/or other materials provided with the distribution.
+# *  * Neither the name of NVIDIA CORPORATION & AFFILIATES nor the names of its
+# *    contributors may be used to endorse or promote products derived
+# *    from this software without specific prior written permission.
+# *
+# * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# */
+
+import os
+
+AddOption('--gpu',
+            dest='gpu',
+            action='store_true',
+            help='Set GPU Target')
+
+AddOption('--debug_gpu',
+            dest='debug_gpu',
+            action='store_true',
+            help='Compile with Debug enabled')
+
+# Create an environment
+env = Environment(ENV = os.environ)
+
+if(GetOption('gpu')):
+
+    
+    print("GPU Target Specified. Using nvcc.")
+
+    env.Append(GPU = True)
+
+    # direct SCons to the nvcc tool
+    env.Tool('nvcc', toolpath = ['#'])
+    #env.Replace(CXX='/usr/local/cuda-11.2/bin/nvcc')
+
+    # add things include path to the CPPPATH
+    # env.Append(CPPPATH = [])
+
+    # add the CUDA library paths to the LIBPATH
+    #env.Append(LIBPATH  = ['/usr/local/cuda-11.2/lib64'])
+
+    # link to glut, glew, the cuda runtime, and the cuda utility libraries
+    # env.Append(LIBS = ['glut', 'GLEW', 'cudart', 'cutil'])
+    if(GetOption('debug_gpu')):
+        nvflags = ['-std=c++17', '-arch=sm_86', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-g', '-G', '-O0', '-lcuda']
+    else:
+        nvflags = ['-std=c++17', '-arch=sm_86', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-O0', '-lcuda']
+
+    env.Append(NVCCFLAGS = nvflags)
+    env.Append(CCFLAGS = ['-std=c++17', '-g', '-O0'])
+
+    # Flags to the linker
+    env.Append(LINKFLAGS = ['-static-libgcc', '-static-libstdc++', '-L/home/utils/cuda_11.2/lib64', '-lcudart'])
+    env.Replace(LINK="g++")
+else:
+    # Compiler Flags
+    # Add FLOATVAL/INTVAL for datatype
+    env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++17', '-pthread', '-g', '-O0'])
+
+    # Flags to the linker
+    env.Append(LINKFLAGS = ['-std=c++17', '-pthread', '-static-libgcc', '-static-libstdc++', '-fconcepts'])
+    env.Replace(LINK='g++')
+
+# Include directories
+include_dirs = ['#../lib/queueda/include']
+env.Append(CPPPATH = include_dirs)
+
+# Add libraries
+env.Append(LIBS = [])
+
+
+# List of all sub-directories
+subdirs = ['examples']
+
+def PhonyTargets(env = None, **kw):
+    if not env: env = DefaultEnvironment()
+    for target,action in kw.items():
+        env.AlwaysBuild(env.Alias(target, [], action))
+
+pycmd = "python"
+if os.environ.get('PYTHON'):
+    pycmd = os.environ['PYTHON'] 
+
+PhonyTargets(lint = 'find . -name "*.cpp" -or -name "*.hpp" | grep -v opencv | xargs ' + pycmd + ' ../util/cpplint.py --linelength=256 2> cpplint.out')
+
+# Invoke Scons in all the subdirectories
+for subdir in subdirs:
+    env.SConscript(subdir + '/SConscript', {'env': env})
+
