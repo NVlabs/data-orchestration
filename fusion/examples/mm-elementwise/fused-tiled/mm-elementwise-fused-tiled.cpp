@@ -31,11 +31,11 @@
 using namespace queueda;
 
 
-static const Coordinate N0 = 32; // THREADS_PER_WARP
-static const Coordinate M2 = 8; // WARPS_PER_BLOCK
+static const Coordinate N0 = 32;//32; // THREADS_PER_WARP
+static const Coordinate M2 = 8;//8; // WARPS_PER_BLOCK
 static const Coordinate N3 = 1; // BLOCKS_PER_GPU
 static const Coordinate N1 = 4; // Buffer N
-static const Coordinate M0 = 4; // Buffer M
+static const Coordinate M0 = 4; // Buffer M, and UNROLLING_FACTOR
 
 
 // Globals
@@ -106,6 +106,7 @@ class Loop1FusedLoop2 : public Node {
         for (Coordinate k = 0; k < K; k++) {
           for (Coordinate n1 = 0; n1 < N1; n1++) {
             Coordinate n = n3 * N2 * N1 * N0 + n2 * N1 * N0 + n1 * N0 + n0;
+            #pragma unroll
             for (Coordinate m0 = 0; m0 < M0; m0++) {
               Coordinate m = m2 * M1 * M0 + m1 * M0 + m0;
               Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, buffer_[n1][m0], a_[m * K__ + k], b_[k * N__ + n]);
@@ -119,6 +120,7 @@ class Loop1FusedLoop2 : public Node {
         // Second Loop: Low compute intensity
         for (Coordinate n1 = 0; n1 < N1; n1++) {
           Coordinate n = n3 * N2 * N1 * N0 + n2 * N1 * N0 + n1 * N0 + n0;
+          #pragma unroll
           for (Coordinate m0 = 0; m0 < M0; m0++) {
             Coordinate m = m2 * M1 * M0 + m1 * M0 + m0;
             z_[m * N__ + n] = buffer_[n1][m0] * 17;
@@ -188,6 +190,8 @@ inline
 int
 RunFT(Coordinate M, Coordinate K, Coordinate N) {
 
+  queueda::Init();
+
   SimpleTensor* af = new SimpleTensor({M, K}, "A");
   SimpleTensor* bf = new SimpleTensor({K, N}, "B");
   SimpleTensor* zf = new SimpleTensor({M, N}, "Z");
@@ -219,7 +223,7 @@ RunFT(Coordinate M, Coordinate K, Coordinate N) {
   SetDeviceArray<Value>(bd, bf->v_, K * N);
   SetDeviceArray<Value>(zd, zf->v_, M * N);
   
-  FTKernel<<<N3, M2*N0>>>(M, K, N, ad, bd, zd);
+  FTKernel<<<N3, M2*QUEUDA_MAX_THREADS_PER_WARP>>>(M, K, N, ad, bd, zd);
   gpuErrchk(cudaPeekAtLastError());
   cudaDeviceSynchronize();
   SetHostArray<Value>(zf->v_, zd, M * N);

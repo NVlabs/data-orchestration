@@ -34,6 +34,7 @@ using namespace queueda;
 static const Coordinate N0 = 32; // THREADS_PER_WARP
 static const Coordinate M1 = 8; // WARPS_PER_BLOCK
 static const Coordinate N2 = 1; // BLOCKS_PER_GPU
+static const Coordinate K0 = 8; // UNROLLING_FACTOR
 
 
 // Globals
@@ -90,7 +91,7 @@ class Loop1FusedLoop2 : public Node {
     
     Coordinate M0(M__/M1);
     Coordinate N1(N__/(N2*N0));
-    Coordinate K(K__);
+    Coordinate K1(K__/K0);
     
     for (Coordinate n1 = 0; n1 < N1; n1++) {
       Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
@@ -98,9 +99,13 @@ class Loop1FusedLoop2 : public Node {
         Coordinate m = m1 * M0 + m0;
         Value tmp = 0;
         // First Loop: High compute intensity
-        for (Coordinate k = 0; k < K; k++) {
-          Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, tmp, a_[m * K__ + k], b_[k * N__ + n]);
-          tmp += a_[m * K__ + k] * b_[k * N__ + n];
+        for (Coordinate k1 = 0; k1 < K1; k1++) {
+          #pragma unroll
+          for (Coordinate k0 = 0; k0 < K0; k0++) {
+            Coordinate k = k1 * K0 + k0;
+            Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, tmp, a_[m * K__ + k], b_[k * N__ + n]);
+            tmp += a_[m * K__ + k] * b_[k * N__ + n];
+          }
         }
         Trace(3, "Loop 1: Finish K");
         // Second Loop: Low compute intensity
@@ -165,6 +170,8 @@ FTKernel(
 inline
 int
 RunFT(Coordinate M, Coordinate K, Coordinate N) {
+
+  queueda::Init();
 
   SimpleTensor* af = new SimpleTensor({M, K}, "A");
   SimpleTensor* bf = new SimpleTensor({K, N}, "B");

@@ -60,12 +60,12 @@ if(GetOption('gpu')):
     # link to glut, glew, the cuda runtime, and the cuda utility libraries
     # env.Append(LIBS = ['glut', 'GLEW', 'cudart', 'cutil'])
     if(GetOption('debug_gpu')):
-        nvflags = ['-std=c++17', '-arch=sm_86', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-g', '-G', '-O0', '-lcuda']
+        nvflags = ['-std=c++17', '-arch=sm_80', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-g', '-G', '-lcuda']
     else:
-        nvflags = ['-std=c++17', '-arch=sm_86', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-O0', '-lcuda']
+        nvflags = ['-std=c++17', '-arch=sm_80', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-lcuda']
 
     env.Append(NVCCFLAGS = nvflags)
-    env.Append(CCFLAGS = ['-std=c++17', '-g', '-O0'])
+    env.Append(CCFLAGS = ['-std=c++17', '-g'])
 
     # Flags to the linker
     env.Append(LINKFLAGS = ['-static-libgcc', '-static-libstdc++', '-L/home/utils/cuda_11.2/lib64', '-lcudart'])
@@ -73,7 +73,7 @@ if(GetOption('gpu')):
 else:
     # Compiler Flags
     # Add FLOATVAL/INTVAL for datatype
-    env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++17', '-pthread', '-g', '-O0'])
+    env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++17', '-pthread', '-g'])
 
     # Flags to the linker
     env.Append(LINKFLAGS = ['-std=c++17', '-pthread', '-static-libgcc', '-static-libstdc++', '-fconcepts'])
@@ -82,9 +82,6 @@ else:
 # Include directories
 include_dirs = ['#../lib/queueda/include']
 env.Append(CPPPATH = include_dirs)
-
-# Add libraries
-env.Append(LIBS = [])
 
 
 # List of all sub-directories

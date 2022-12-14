@@ -119,8 +119,6 @@ void SetHostArray(T* dst_ptr, T* src_ptr, int arr_size) {
 #include <cuda/atomic>
 #include <nvfunctional>
 
-#define DEFAULT_Q_SIZE 8
-#define MAX_Q_BUFFERING 49152
 
 #else
 
@@ -136,15 +134,10 @@ void SetHostArray(T* dst_ptr, T* src_ptr, int arr_size) {
 #include <atomic>
 #include <functional>
 
-#define DEFAULT_Q_SIZE 1024
-#define MAX_Q_BUFFERING 10000000
-
 #endif 
 
-#define TRACE_LEVEL 4
-#define MAX_QS_PER_NODE 4
-#define MAX_Q_FANOUT 16
-#define MAX_TENSOR_RANKS 8
+#include "options.hpp"
+
 
 // Utility functions to replace std::lib on device
 
@@ -276,25 +269,19 @@ MakeQuadruple(const A& a, const B& b, const C& c, const D& d) {
 // TODO: something more useful here, with instance numbering.
 using Name = const char[];
 
-// TODO: GENERALIZE THIS A BIT
-#define QUEUDA_MAX_BLOCKS_PER_GPU 128
-#define QUEUDA_MAX_WARPS_PER_BLOCK 64
-#define QUEUDA_MAX_THREADS_PER_WARP 32
-#define QUEUDA_MAX_SEQUENTIAL_NODES 8
-
 class Node;
 
 // Node tracking
 // These must be initialized to NULL
 __CUDA_DEVICE__
-static Node* registry__[QUEUDA_MAX_BLOCKS_PER_GPU][QUEUDA_MAX_WARPS_PER_BLOCK][QUEUDA_MAX_THREADS_PER_WARP][QUEUDA_MAX_SEQUENTIAL_NODES];
-
+static Node* registry__[options::kMaxBlocksPerGPU][options::kMaxWarpsPerBlock][options::kMaxThreadsPerWarp][options::kMaxSequentialNodes];
 
 // Queue buffering
 __CUDA_DEVICE__
-static __CUDA_SHARED__ char buffering__[MAX_Q_BUFFERING];
+static __CUDA_SHARED__ char buffering__[options::kMaxQBuffering];
 __CUDA_DEVICE__
 static int buffer_end__;
+
 
 
 class Node 
@@ -305,26 +292,42 @@ class Node
   int block_;
   int warp_;
   int thread_;
+  char msgbuff_[options::kMsgBufferSize];
+  int buff_start_;
  
   __CUDA_DEVICE__
   Node(Name instance_name) : block_(-1), warp_(-1), thread_(-1)
   {
+   
     // Work around lack of strlen/strdup
     int cur = 0;
     while (instance_name[cur]) {
+      assert(cur < options::kMsgBufferSize);
       cur++;
-      assert(cur < 1024);
     }
-    char* copy = new char[cur+1]();
     for (int x = 0; x < cur; x++) {
-      copy[x] = instance_name[x];
+      msgbuff_[x] = instance_name[x];
     }
-    copy[cur] = 0;
-    instance_name_ = copy;
+
+    msgbuff_[cur++] = '_';
+    msgbuff_[cur++] = '%';
+    msgbuff_[cur++] = 'd';
+    msgbuff_[cur++] = '_';
+    msgbuff_[cur++] = '%';
+    msgbuff_[cur++] = 'd';
+    msgbuff_[cur++] = '_';
+    msgbuff_[cur++] = '%';
+    msgbuff_[cur++] = 'd';
+    msgbuff_[cur++] = ':';
+    msgbuff_[cur++] = ' ';
+    msgbuff_[cur] = 0;
+    buff_start_ = cur;
+
   }
+
   __CUDA_DEVICE__ inline
   void Bind(const int & b, const int & w, const int& t) {
-    for (int x = 0; x < QUEUDA_MAX_SEQUENTIAL_NODES; x++) {
+    for (int x = 0; x < options::kMaxSequentialNodes; x++) {
       if (registry__[b][w][t][x] == 0) {
         registry__[b][w][t][x] = this;
         block_ = b;
@@ -348,32 +351,23 @@ class Node
   __CUDA_DEVICE__ inline
   void Trace(int level, const char* format, Arguments... args) {
 
-    if (level > TRACE_LEVEL) return;
+    if (level > options::device_->kCurrentLibraryTraceLevel) {
+      //printf("%d\n", options::device_->kCurrentLibraryTraceLevel);
+      return;
+    }
+    
     // Work around the lack of strcpy in CUDA.
-    char msgbuff[1024];
-    msgbuff[0] = '%';
-    msgbuff[1] = 's';
-    msgbuff[2] = '_';
-    msgbuff[3] = '%';
-    msgbuff[4] = 'd';
-    msgbuff[5] = '_';
-    msgbuff[6] = '%';
-    msgbuff[7] = 'd';
-    msgbuff[8] = '_';
-    msgbuff[9] = '%';
-    msgbuff[10] = 'd';
-    msgbuff[11] = ':';
-    msgbuff[12] = ' ';
     int cur = 0;
     while (format[cur]) {
-      assert(cur+13 < 1024);
-      msgbuff[cur+13] = format[cur];
+      msgbuff_[buff_start_ + cur] = format[cur];
       cur++;
     }
-    msgbuff[cur+13] = '\n';
-    msgbuff[cur+14] = 0;
-    printf(msgbuff, instance_name_, block_, warp_, thread_, args...);
+    msgbuff_[buff_start_ + cur] = '\n';
+    msgbuff_[buff_start_ + cur + 1] = 0;
+    printf(msgbuff_, block_, warp_, thread_, args...);
+    return;
   }
+
 };
 
 
@@ -400,12 +394,12 @@ class QO {
  public:
 
   Node* producer_ = NULL;
-  QI<T, N>* connections_[MAX_Q_FANOUT];
+  QI<T, N>* connections_[options::kMaxQFanout];
   int num_connections_ = 0;
   
   __CUDA_CALLABLE__ inline
   QO<T, N>(Node* prod) : producer_(prod), num_connections_(0) {
-    for (int x = 0; x < MAX_Q_FANOUT; x++) {
+    for (int x = 0; x < options::kMaxQFanout; x++) {
       connections_[x] = NULL;
     }
   }
@@ -480,10 +474,10 @@ class SPSCQueue {
   }
 
   __CUDA_DEVICE__ inline
-  SPSCQueue<T>(int size = DEFAULT_Q_SIZE) : size_(size) {
+  SPSCQueue<T>(int size = options::kDefaultQSize) : size_(size) {
     data_ = reinterpret_cast<Tagged<T>*>(&buffering__[buffer_end__]);
     buffer_end__ += size_ * sizeof(Tagged<T>);
-    assert(buffer_end__ < MAX_Q_BUFFERING);
+    assert(buffer_end__ < options::kMaxQBuffering);
     for (int x = 0; x < size_; x++) {
       data_[x] = Tagged<T>();
     }
@@ -610,10 +604,10 @@ class QI {
   ~QI<T, N>() = default;
 
   __CUDA_CALLABLE__ inline
-  QI<T, N>(QO<T, N>* qo, int size = DEFAULT_Q_SIZE) : queue_(size) {
+  QI<T, N>(QO<T, N>* qo, int size = options::kDefaultQSize) : queue_(size) {
     assert(qo->producer_ != NULL);
     producer_ = qo->producer_;
-    assert(qo->num_connections_ <= MAX_Q_FANOUT);
+    assert(qo->num_connections_ <= options::kMaxQFanout);
     qo->connections_[qo->num_connections_] = this;
     qo->num_connections_++;
   }
@@ -714,30 +708,36 @@ void AllFinish(T* arr, int size, const Tag& t = 1) {
 #ifdef __CUDACC__
 
 
-__device__ inline
+__CUDA_DEVICE__ inline
 void Build(BuilderFunction build) {
+
   if (blockIdx.x == 0 && threadIdx.x == 0) {
-    for (int s = 0; s < QUEUDA_MAX_SEQUENTIAL_NODES; s++) {
-      for (int b = 0; b < QUEUDA_MAX_BLOCKS_PER_GPU; b++) {
-        for (int w = 0; w < QUEUDA_MAX_WARPS_PER_BLOCK; w++) {
-          for (int t = 0; t < QUEUDA_MAX_THREADS_PER_WARP; t++) {
+    for (int s = 0; s < options::kMaxSequentialNodes; s++) {
+      for (int b = 0; b < options::kMaxBlocksPerGPU; b++) {
+        for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
+          for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
             registry__[b][w][t][s] = NULL;
           }
         }
       }
     }
+
     buffer_end__ = 0;
+
     printf("Starting build.\n");
 
     if (build)
       build();
 
-    printf("Build Complete!");
+    printf("Build Complete!\n");
+
   }
 
-    // Everyone waits until build completes
-    __syncthreads();
+  // Everyone waits until build completes
+  __syncthreads();
+
 }
+
 
 __device__ inline
 void Run() {
@@ -746,15 +746,14 @@ void Run() {
     printf("=============================\nBeginning Run\n=============================\n");
   }
   
-  // TODO: THESE BOUNDS SHOULD BE DYNAMIC
   int my_bid = blockIdx.x;
-  assert(my_bid < QUEUDA_MAX_BLOCKS_PER_GPU);
-  int my_tid = threadIdx.x % QUEUDA_MAX_THREADS_PER_WARP;
-  int my_wid = threadIdx.x / QUEUDA_MAX_THREADS_PER_WARP;
+  assert(my_bid < options::kMaxBlocksPerGPU);
+  int my_tid = threadIdx.x % options::kMaxThreadsPerWarp;
+  int my_wid = threadIdx.x / options::kMaxThreadsPerWarp;
   
-  for (int s = 0; s < QUEUDA_MAX_SEQUENTIAL_NODES; s++) {
+  for (int s = 0; s < options::kMaxSequentialNodes; s++) {
     if (registry__[my_bid][my_wid][my_tid][s] != NULL) {
-      printf("=============================\nRunning Node %s_%d_%d_%d (%d)\n=============================\n", registry__[my_bid][my_wid][my_tid][s]->instance_name_, my_bid, my_wid, my_tid, s);
+      registry__[my_bid][my_wid][my_tid][s]->Trace(2, "======= Beginning (%d) =======", s);
       registry__[my_bid][my_wid][my_tid][s]->Run();
     }
   }
@@ -764,10 +763,10 @@ void Run() {
 
 inline
 void Build(BuilderFunction build) {
-  for (int s = 0; s < QUEUDA_MAX_SEQUENTIAL_NODES; s++) {
-    for (int b = 0; b < QUEUDA_MAX_BLOCKS_PER_GPU; b++) {
-      for (int w = 0; w < QUEUDA_MAX_WARPS_PER_BLOCK; w++) {
-        for (int t = 0; t < QUEUDA_MAX_THREADS_PER_WARP; t++) {
+  for (int s = 0; s < options::kMaxSequentialNodes; s++) {
+    for (int b = 0; b < options::kMaxBlocksPerGPU; b++) {
+      for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
+        for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
           registry__[b][w][t][s] = NULL;
         }
       }
@@ -780,18 +779,18 @@ void Build(BuilderFunction build) {
   build();
   
   printf("Build Complete!\n");
-  
+
 }
 
 inline
 void Run() {
   printf("=============================\nBeginning Run\n=============================\n");
-  for (int s = 0; s < QUEUDA_MAX_SEQUENTIAL_NODES; s++) {
-    for (int b = 0; b < QUEUDA_MAX_BLOCKS_PER_GPU; b++) {
-      for (int w = 0; w < QUEUDA_MAX_WARPS_PER_BLOCK; w++) {
-        for (int t = 0; t < QUEUDA_MAX_THREADS_PER_WARP; t++) {
+  for (int s = 0; s < options::kMaxSequentialNodes; s++) {
+    for (int b = 0; b < options::kMaxBlocksPerGPU; b++) {
+      for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
+        for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
           if (registry__[b][w][t][s] != NULL) {
-            printf("=============================\nRunning Node %d %d %d %d: %s\n=============================\n", b, w, t, s, registry__[b][w][t][s]->instance_name_);
+            registry__[b][w][t][s]->Trace(2, "======= Beginning (%d) =======", s);
             registry__[b][w][t][s]->Run();
           }
         }
@@ -803,5 +802,11 @@ void Run() {
 
 
 #endif
+
+void Init()
+{
+  AddOptions();
+  ReadOptions();
+}
 
 }  // namespace: queueda

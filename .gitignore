@@ -5,6 +5,8 @@
 *.a
 *.out
 *.pyc
+*.bak
+*.csv
 .sconsign.dblite
 cpplint.out
 .nfs*

@@ -35,7 +35,7 @@ static const Coordinate N0 = 32; // THREADS_PER_WARP
 static const Coordinate M2 = 8; // WARPS_PER_BLOCK
 static const Coordinate N3 = 1; // BLOCKS_PER_GPU
 static const Coordinate N1 = 4; // Buffer N
-static const Coordinate M0 = 4; // Buffer M
+static const Coordinate M0 = 4; // Buffer M, and UNROLLING_FACTOR
 
 
 // Globals
@@ -105,6 +105,7 @@ class Loop1 : public Node {
         for (Coordinate k = 0; k < K; k++) {
           for (Coordinate n1 = 0; n1 < N1; n1++) {
             Coordinate n = n3 * N2 * N1 * N0 + n2 * N1 * N0 + n1 * N0 + n0;
+            #pragma unroll
             for (Coordinate m0 = 0; m0 < M0; m0++) {
               Coordinate m = m2 * M1 * M0 + m1 * M0 + m0;
               Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, buffer_[n1][m0], a_[m * K__ + k], b_[k * N__ + n]);
@@ -116,6 +117,7 @@ class Loop1 : public Node {
         }
         // Copy final sums to queue:
         for (Coordinate n1 = 0; n1 < N1; n1++) {
+          #pragma unroll
           for (Coordinate m0 = 0; m0 < M0; m0++) {
              z_q_.Push(buffer_[n1][m0]);
              buffer_[n1][m0] = 0;
@@ -287,6 +289,8 @@ DTKernel(
 inline
 int
 RunDT(Coordinate M, Coordinate K, Coordinate N) {
+
+  queueda::Init();
 
   SimpleTensor* af = new SimpleTensor({M, K}, "A");
   SimpleTensor* bf = new SimpleTensor({K, N}, "B");
