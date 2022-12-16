@@ -62,7 +62,7 @@ if(GetOption('gpu')):
     if(GetOption('debug_gpu')):
         nvflags = ['-std=c++17', '-arch=sm_80', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-g', '-G', '-lcuda']
     else:
-        nvflags = ['-std=c++17', '-arch=sm_80', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-lcuda']
+        nvflags = ['-std=c++17', '-O3', '-arch=sm_80', '-m64', '--extended-lambda', '--expt-relaxed-constexpr', '-lcuda']
 
     env.Append(NVCCFLAGS = nvflags)
     env.Append(CCFLAGS = ['-std=c++17', '-g'])
@@ -76,7 +76,7 @@ else:
     env.Append(CCFLAGS = ['-fmax-errors=1', '-std=c++17', '-pthread', '-g'])
 
     # Flags to the linker
-    env.Append(LINKFLAGS = ['-std=c++17', '-pthread', '-static-libgcc', '-static-libstdc++', '-fconcepts'])
+    env.Append(LINKFLAGS = ['-std=c++17', '-O3', '-pthread', '-static-libgcc', '-static-libstdc++', '-fconcepts'])
     env.Replace(LINK='g++')
 
 # Include directories

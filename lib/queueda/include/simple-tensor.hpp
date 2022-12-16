@@ -29,7 +29,9 @@
 
 #include <vector>
 #include <queueda.hpp>
-using namespace queueda;
+
+namespace queueda {
+
 
 // Some simple typedefs and data types.
 using Coordinate = int;
@@ -68,32 +70,37 @@ class SimpleTensor {
       size_ *= dim;
     }
     
-    //printf("Creating new tensor of size: %d\n", size_);
     v_ = new Value[size_]();
     
+    for (int x = 0; x < size_; x++) {
+      v_[x] = 0;
+    }
+  }
+
+  SimpleTensor(const Point& shape, Name name, Tuple<Value, Value> rand_range)
+    : SimpleTensor(shape, name) {
+    
+    auto& [min, max] = rand_range;
+    Value diff = max - min;
+    
+    for (int x = 0; x < size_; x++) {
+      v_[x] = (rand() % diff) + min;
+    }
   }
   
-#ifdef __CUDACC__
-
-  Value* device_v_;
-
   inline
-  SimpleTensor* CopyToDevice() {
-    auto res = AllocOnDevice<SimpleTensor>();
-    SetDeviceString(&res->name_, name_);
-    Value* d_v = AllocArrayOnDevice<Value>(size_);
-    SetDeviceArray(d_v, v_, size_);
-    SetDeviceValue<Value*>(&res->v_, &d_v);
-    device_v_ = d_v;
-    return res;
+  Value* CopyArrayToDevice() {
+    auto dv = AllocArrayOnDevice<Value>(size_);
+    SetDeviceArray<Value>(dv, v_, size_);
+    return dv;
   }
-
+  
   inline
-  void CopyToHost(SimpleTensor *td) {
-    SetHostArray(v_, device_v_, size_);
+  void CopyArrayFromDevice(Value* dv) {
+    SetHostArray<Value>(v_, dv, size_);
   }
-#endif
-
+  
+  
   inline
   Coordinate Flatten(const Point& p) {
     assert(p.size() == shape_.size());
@@ -162,3 +169,5 @@ class SimpleTensor {
     return num_mismatches;
   }
 };
+
+}  // namespace queueda

@@ -58,149 +58,82 @@ Coordinate K__;
 __CUDA_DEVICE__
 Coordinate N__;
 
-class Loop1 : public Node {
- 
- Coordinate n2_;
- Coordinate m1_;
- Coordinate n0_;
+__CUDA_DEVICE__
+Value* a_;
+__CUDA_DEVICE__
+Value* b_;
+__CUDA_DEVICE__
+Value* z_;
+__CUDA_DEVICE__
+Value* y_;
 
- Value* a_;
- Value* b_;
- Value* z_;
- 
- public:
- 
-  __CUDA_DEVICE__
-  Loop1 (
-    Coordinate n2,
-    Coordinate m1,
-    Coordinate n0,
-    Value* a,
-    Value* b,
-    Value* z,
-    Name instance_name = "Loop1"
-  ) 
-  : Node(instance_name),
-    n2_(n2),
-    m1_(m1),
-    n0_(n0),
-    a_(a),
-    b_(b),
-    z_(z) {
-    
-    //assert(M__ % M1 == 0);
-    //assert(N__ % (N2*N0) == 0);
-  }
-  
-  ~Loop1() = default;
+__CUDA_DEVICE__
+void Loop1() {
 
-  __CUDA_DEVICE__
-  virtual void Run() {
-    Trace(2, "Begin Run.");
-    Coordinate n0 = n0_; // Thread ID
-    Coordinate m1 = m1_; // Warp ID
-    Coordinate n2 = n2_; // Block ID
-    
-    Coordinate M1 = opt::device_->M1;
-    Coordinate N2 = opt::device_->N2;
-    Coordinate N0 = opt::device_->N0;
-  
-    Coordinate M0(M__/M1);
-    Coordinate N1(N__/(N2 * N0));
-    Coordinate K1(K__/K0);
-    
-    // First Loop: High compute intensity
-    for (Coordinate n1 = 0; n1 < N1; n1++) {
-      Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
-      for (Coordinate m0 = 0; m0 < M0; m0++) {
-        Coordinate m = m1 * M0 + m0;
-        Value tmp = 0;
-        for (Coordinate k1 = 0; k1 < K1; k1++) {
-          #pragma unroll
-          for (Coordinate k0 = 0; k0 < K0; k0++) {
-            Coordinate k = k1 * K0 + k0;
-            Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, tmp, a_[m * K__ + k], b_[k * N__ + n]);
-            tmp += a_[m * K__ + k] * b_[k * N__ + n];
-          }
+  Trace(2, "Begin Loop1.");
+  Coordinate n0 = GetThread();
+  Coordinate m1 = GetWarp();
+  Coordinate n2 = GetBlock();
+
+  Coordinate M1 = opt::device_->M1;
+  Coordinate N2 = opt::device_->N2;
+  Coordinate N0 = opt::device_->N0;
+
+  Coordinate M0(M__/M1);
+  Coordinate N1(N__/(N2 * N0));
+  Coordinate K1(K__/K0);
+
+  // First Loop: High compute intensity
+  for (Coordinate n1 = 0; n1 < N1; n1++) {
+    Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
+    for (Coordinate m0 = 0; m0 < M0; m0++) {
+      Coordinate m = m1 * M0 + m0;
+      Value tmp = 0;
+      for (Coordinate k1 = 0; k1 < K1; k1++) {
+        #pragma unroll
+        for (Coordinate k0 = 0; k0 < K0; k0++) {
+          Coordinate k = k1 * K0 + k0;
+          Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, tmp, a_[m * K__ + k], b_[k * N__ + n]);
+          tmp += a_[m * K__ + k] * b_[k * N__ + n];
         }
-        z_[m * N__ + n] = tmp;
-        Trace(3, "Loop 1: Finish K");
       }
-      Trace(3, "Loop 1: Finish M0");
+      z_[m * N__ + n] = tmp;
+      Trace(3, "Loop 1: Finish K");
     }
-    Trace(3, "Loop 1: Finish N1");
-    Trace(2, "Done.");
+    Trace(3, "Loop 1: Finish M0");
   }
-};
-  
-class Loop2 : public Node {
- 
- Coordinate n2_;
- Coordinate m1_;
- Coordinate n0_;
+  Trace(3, "Loop 1: Finish N1");
+  Trace(2, "Done.");
+}
 
- Value* a_;
- Value* b_;
- Value* z_;
- Value* y_;
- 
- public:
- 
-  __CUDA_DEVICE__
-  Loop2 (
-    Coordinate n2,
-    Coordinate m1,
-    Coordinate n0,
-    Value* a,
-    Value* b,
-    Value* z,
-    Value* y,
-    Name instance_name = "Loop2"
-  ) 
-  : Node(instance_name),
-    n2_(n2),
-    m1_(m1),
-    n0_(n0),
-    a_(a),
-    b_(b),
-    z_(z),
-    y_(y) {
-    
-    //assert(M__ % M1 == 0);
-    //assert(N__ % N2*nN0) == 0);
-  }
-  
-  ~Loop2() = default;
+__CUDA_DEVICE__
+void Loop2() {
 
-  __CUDA_DEVICE__
-  virtual void Run() {
-  
-    Trace(2, "Begin Run.");
-    Coordinate n0 = n0_; // Thread ID
-    Coordinate m1 = m1_; // Warp ID
-    Coordinate n2 = n2_; // Block ID
-    
-    Coordinate M1 = opt::device_->M1;
-    Coordinate N2 = opt::device_->N2;
-    Coordinate N0 = opt::device_->N0;
+  Trace(2, "Begin Loop2.");
+  Coordinate n0 = GetThread();
+  Coordinate m1 = GetWarp();
+  Coordinate n2 = GetBlock();
 
-    Coordinate M0(M__/M1);
-    Coordinate N1(N__/(N2*N0));
+  Coordinate M1 = opt::device_->M1;
+  Coordinate N2 = opt::device_->N2;
+  Coordinate N0 = opt::device_->N0;
 
-    // Second Loop: Low compute intensity
-    for (Coordinate n1 = 0; n1 < N1; n1++) {
-      Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
-      for (Coordinate m0 = 0; m0 < M0; m0++) {
-        Coordinate m = m1 * M0 + m0;
-        y_[m * N__ + n] = z_[m * N__ + n] * 17;
-        Trace(4, "Loop 2: Iteration %d, %d", m, n);
-      }
-      Trace(3, "Loop 2: Finish M0");
+  Coordinate M0(M__/M1);
+  Coordinate N1(N__/(N2*N0));
+
+  // Second Loop: Low compute intensity
+  for (Coordinate n1 = 0; n1 < N1; n1++) {
+    Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
+    for (Coordinate m0 = 0; m0 < M0; m0++) {
+      Coordinate m = m1 * M0 + m0;
+      y_[m * N__ + n] = z_[m * N__ + n] * 17;
+      Trace(4, "Loop 2: Iteration %d, %d", m, n);
     }
-    Trace(3, "Loop 2: Finish N1");
-    Trace(2, "Done.");
+    Trace(3, "Loop 2: Finish M0");
   }
-};
+  Trace(3, "Loop 2: Finish N1");
+  Trace(2, "Done.");
+}
 
 
 __CUDA_DEVICE__
@@ -217,18 +150,12 @@ BaselineTest(
   
 
   Coordinate M1 = opt::device_->M1;
-  Coordinate N2 = opt::device_->N2;
   Coordinate N0 = opt::device_->N0;
 
-  for (Coordinate n2 = 0; n2 < N2; n2++) {
-    for (Coordinate m1 = 0; m1 < M1; m1++) {
-      for (Coordinate n0 = 0; n0 < N0; n0++) {
-        printf("Build %d, %d, %d\n", n2, m1, n0);
-        auto l1 = new Loop1(n2, m1, n0, a, b, z);
-        l1->Bind(n2, m1, n0);
-        auto l2 = new Loop2(n2, m1, n0, a, b, z, y);
-        l2->Bind(n2, m1, n0);
-      }
+  for (Coordinate m1 = 0; m1 < M1; m1++) {
+    for (Coordinate n0 = 0; n0 < N0; n0++) {
+      queueda::Bind(GetBlock(), m1, n0, Loop1);
+      queueda::Bind(GetBlock(), m1, n0, Loop2);
     }
   }
 }
@@ -268,6 +195,10 @@ BTKernel(
   M__ = M;
   K__ = K;
   N__ = N;
+  a_ = a;
+  b_ = b;
+  z_ = z;
+  y_ = y;
 
   queueda::Run();
 }
@@ -276,70 +207,50 @@ inline
 int
 RunBT(Coordinate M, Coordinate K, Coordinate N) {
 
-  queueda::Init();
+  Coordinate M1 = opt::host_->M1;
+  Coordinate N2 = opt::host_->N2;
+  Coordinate N0 = opt::host_->N0;
+
+  queueda::Init(N2, M1, N0);
   
-  SimpleTensor* af = new SimpleTensor({M, K}, "A");
-  SimpleTensor* bf = new SimpleTensor({K, N}, "B");
+  SimpleTensor* af = new SimpleTensor({M, K}, "A", {0, 255});
+  SimpleTensor* bf = new SimpleTensor({K, N}, "B", {0, 255});
   SimpleTensor* zf = new SimpleTensor({M, N}, "Z");
   SimpleTensor* yf = new SimpleTensor({M, N}, "Y");
   
-  for (int m = 0; m < M; m++) {
-    for (int k = 0; k < K; k++) {
-      af->v_[m * K + k] = rand() % 255;
-    }
-  }
-  //af->Print();
-  for (int k = 0; k < K; k++) {
-    for (int n = 0; n < N; n++) {
-      bf->v_[k * N + n] = rand() % 255;
-    }
-  }
-  //bf->Print();
-  for (int m = 0; m < M; m++) {
-    for (int n = 0; n < N; n++) {
-      zf->v_[m * N + n] = 0;
-      yf->v_[m * N + n] = 0;
-    }
-  }
-
+  auto ad = af->CopyArrayToDevice();
+  auto bd = bf->CopyArrayToDevice();
+  auto zd = zf->CopyArrayToDevice();
+  auto yd = yf->CopyArrayToDevice();
+  
+  //queueda::Build(build_func)
+  //queueda::Run(B, W, T, run_func)
+  
 #ifdef __CUDACC__
 
-  auto ad = AllocArrayOnDevice<Value>(M * K);
-  auto bd = AllocArrayOnDevice<Value>(K * N);
-  auto zd = AllocArrayOnDevice<Value>(M * N);
-  auto yd = AllocArrayOnDevice<Value>(M * N);
 
-  SetDeviceArray<Value>(ad, af->v_, M * K);
-  SetDeviceArray<Value>(bd, bf->v_, K * N);
-  SetDeviceArray<Value>(zd, zf->v_, M * N);
-  SetDeviceArray<Value>(yd, yf->v_, M * N);
-  
-  Coordinate M1 = opt::host_->M1;
-  Coordinate N2 = opt::host_->N2;
-
-  BTBuildKernel<<<1, 1>>>(M, K, N, ad, bd, zd, yd);
-
-  BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTBuildKernel<<<N2, 1>>>(M, K, N, ad, bd, zd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  /*BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
-  gpuErrchk(cudaPeekAtLastError());
-  BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
-  gpuErrchk(cudaPeekAtLastError());
-  BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
-  gpuErrchk(cudaPeekAtLastError());
-*/
   cudaDeviceSynchronize();
-  SetHostArray<Value>(yf->v_, yd, M * N);
+
+  BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  gpuErrchk(cudaPeekAtLastError());
+  BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  gpuErrchk(cudaPeekAtLastError());
+  BTKernel<<<N2, M1*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  gpuErrchk(cudaPeekAtLastError());
+
+  cudaDeviceSynchronize();
 
 #else
 
   
-  BTBuildKernel(M, K, N, af->v_, bf->v_, zf->v_, yf->v_);
-  BTKernel(M, K, N, af->v_, bf->v_, zf->v_, yf->v_);
+  BTBuildKernel(M, K, N, ad, bd, zd, yd);
+  BTKernel(M, K, N, ad, bd, zd, yd);
 
 #endif
 
-
+  yf->CopyArrayFromDevice(yd);
   yf->Print();
   
   SimpleTensor* y_ref = new SimpleTensor({M, N}, "Y_REF");
@@ -377,36 +288,44 @@ main(int argc, char** argv) {
     opt::host_->N0 = std::atoi(argv[3]);
   }
   
-  Coordinate NUM_PASSES = 4;
+  Coordinate NUM_PASSES_M = 4;
   
   if (argc > 4)
   {
-    NUM_PASSES = std::atoi(argv[4]);
+    NUM_PASSES_M = std::atoi(argv[4]);
   }
-#ifdef __CUDACC__
 
-  auto dev_opt = AllocOnDevice<opt::DynamicOptions>();
-  SetDeviceValue(dev_opt, opt::host_);
-  gpuErrchk(cudaMemcpyToSymbol(opt::device_, &dev_opt, sizeof(opt::DynamicOptions*)));
-
-#else
-  opt::device_ = opt::host_;
-#endif
+  Coordinate NUM_PASSES_N = 5;
   
-  Coordinate M = opt::host_->M1 * NUM_PASSES;
+  if (argc > 5)
+  {
+    NUM_PASSES_N = std::atoi(argv[5]);
+  }
+
   Coordinate K = 8;
-  Coordinate N = opt::host_->N2 * NUM_PASSES * opt::host_->N0;
+
+  if (argc > 6)
+  {
+    K = std::atoi(argv[6]);
+  }
+  
+  SET_DEVICE_OPTIONS(opt::DynamicOptions, opt::device_, opt::host_);
+
+  Coordinate M = opt::host_->M1 * NUM_PASSES_M;
+  Coordinate N = opt::host_->N2 * NUM_PASSES_N * opt::host_->N0;
   
   Coordinate a_size = M * K * sizeof(Value);
   Coordinate b_size = K * N * sizeof(Value);
   Coordinate z_size = M * N * sizeof(Value);
+  Coordinate num_muls = M * K * N;
 
-  printf("M1: %'d, M0: %'d, N2: %'d, N1: %'d, N0: %'d\n", opt::host_->M1, NUM_PASSES, opt::host_->N2, NUM_PASSES, opt::host_->N0);
+  printf("M1: %'d, M0: %'d, N2: %'d, N1: %'d, N0: %'d\n", opt::host_->M1, NUM_PASSES_M, opt::host_->N2, NUM_PASSES_N, opt::host_->N0);
   printf("M: %'d, K: %'d, N: %'d\n", M, K, N);
   printf("Size of A in bytes: %'d\n", a_size);
   printf("Size of B in bytes: %'d\n", b_size);
   printf("Size of Z in bytes: %'d\n", z_size);
   printf("Total GPU memory footprint in bytes: %'d\n", a_size + b_size + z_size);
-  printf("Total Muls: %'d\n", M * K * N);
+  printf("Total Muls: %'d\n", num_muls);
+
   return RunBT(M, K, N);
 }

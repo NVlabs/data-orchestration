@@ -33,6 +33,22 @@
 #include <any>
 
 
+#ifdef __CUDACC__
+
+#define SET_DEVICE_OPTIONS(T, dev_symb, host_opt) \
+  auto dev_opt = AllocOnDevice<T>(); \
+  SetDeviceValue(dev_opt, host_opt); \
+  gpuErrchk(cudaMemcpyToSymbol(dev_symb, &dev_opt, sizeof(decltype(host_opt))));
+
+#else
+
+#define SET_DEVICE_OPTIONS(T, dev_symb, host_opt) \
+  dev_symb = host_opt;
+
+
+#endif 
+
+
 namespace queueda
 {
 
@@ -44,7 +60,7 @@ namespace options
 #ifdef __CUDACC__
 
 static const int kDefaultQSize = 8;
-static const int kMaxQBuffering = 49152;
+static const int kMaxQBuffering = 48000;//49152;
 
 #else
 
@@ -69,6 +85,9 @@ struct DynamicOptions
  public:
   bool kShouldCheckReferenceOutput = true;
   int kCurrentLibraryTraceLevel = 0;
+  int kActiveBlocksPerGPU = 0;
+  int kActiveWarpsPerBlock = 0;
+  int kActiveThreadsPerWarp = 0;
 };
 
 // Device copies of dynamic options have to be separate, so 
@@ -156,17 +175,7 @@ void ReadOptions()
   ParseOptions<int>();
   ParseOptions<float>();
   
-#ifdef __CUDACC__
-
-  auto dev_opt = AllocOnDevice<options::DynamicOptions>();
-  SetDeviceValue(dev_opt, options::host_);
-  gpuErrchk(cudaMemcpyToSymbol(options::device_, &dev_opt, sizeof(options::DynamicOptions*)));
-
-#else
-
-  options::device_ = options::host_;
-
-#endif
+  SET_DEVICE_OPTIONS(options::DynamicOptions, options::device_, options::host_);
 
 }
 

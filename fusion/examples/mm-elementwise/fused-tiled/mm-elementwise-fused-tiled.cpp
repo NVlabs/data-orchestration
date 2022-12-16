@@ -31,11 +31,22 @@
 using namespace queueda;
 
 
-static const Coordinate N0 = 32;//32; // THREADS_PER_WARP
-static const Coordinate M2 = 8;//8; // WARPS_PER_BLOCK
-static const Coordinate N3 = 1; // BLOCKS_PER_GPU
-static const Coordinate N1 = 4; // Buffer N
-static const Coordinate M0 = 4; // Buffer M, and UNROLLING_FACTOR
+// Dynamic options, shared between host and device,
+// with default values.
+namespace opt {
+
+struct DynamicOptions {
+  Coordinate N3 = 1; // BLOCKS_PER_GPU
+  Coordinate M2 = 8; // WARPS_PER_BLOCK
+  Coordinate N0 = 32;// THREADS_PER_WARP
+  Coordinate N1 = 4; // Buffer N
+  Coordinate M0 = 4; // Buffer M, and UNROLLING_FACTOR
+};
+
+DynamicOptions* host_;
+__CUDA_DEVICE__ DynamicOptions* device_;
+
+}
 
 
 // Globals
@@ -46,97 +57,81 @@ Coordinate K__;
 __CUDA_DEVICE__
 Coordinate N__;
 
- 
-template<
-  int M0,
-  int N1
->
-class Loop1FusedLoop2 : public Node {
- 
- Coordinate n3_;
- Coordinate m2_;
- Coordinate n0_;
+__CUDA_DEVICE__
+Value* a_;
+__CUDA_DEVICE__
+Value* b_;
+__CUDA_DEVICE__
+Value* y_;
 
- Value* a_;
- Value* b_;
- Value* z_;
  
- Value buffer_[N1][M0]; // TODO: Shared
+__CUDA_DEVICE__
+void Loop1Loop2FusedTiled() {
+                             
+  Coordinate n0 = GetThread();
+  Coordinate m2 = GetWarp();
+  Coordinate n3 = GetBlock();
 
- public:
- 
-  __CUDA_DEVICE__
-  Loop1FusedLoop2 (
-    Coordinate n3,
-    Coordinate m2,
-    Coordinate n0,
-    Value* a,
-    Value* b,
-    Value* z,
-    Name instance_name = "Fused"
-  ) 
-  : Node(instance_name),
-    n3_(n3),
-    m2_(m2),
-    n0_(n0),
-    a_(a),
-    b_(b),
-    z_(z) {
-    
-    //assert(M__ % (M2*M0) == 0);
-    //assert(N__ % (N3*N1*N0) == 0);
-  }
+  Coordinate M0 = opt::device_->M0;
+  Coordinate M2 = opt::device_->M2;
+  Coordinate N0 = opt::device_->N0;
+  Coordinate N1 = opt::device_->N1;
+  Coordinate N3 = opt::device_->N3;
+
+  Coordinate M1(M__/(M2*M0));
+  Coordinate N2(N__/(N3*N1*N0));
+  Coordinate K(K__);
+
+  Trace(2, "Begin Run: %d, %d, %d, %d, %d, %d, %d, %d", N3, N2, N1, N0, M2, M1, M0, K);
+
+
+
+  Value* buffer = static_cast<Value*>(std::malloc(N1 * M0 * sizeof(Value)));
   
-  ~Loop1FusedLoop2() = default;
+  // Initialize buffer
+  for (Coordinate n1 = 0; n1 < N1; n1++) {
+    #pragma unroll
+    for (Coordinate m0 = 0; m0 < M0; m0++) {
+      buffer[n1 * M0 + m0] = 0;
+    }
+  }
 
-  __CUDA_DEVICE__
-  virtual void Run() {
-    Trace(2, "Begin Run.");
-    Coordinate n0 = n0_; // Thread ID
-    Coordinate m2 = m2_; // Warp ID
-    Coordinate n3 = n3_; // Block ID
-    
-    Coordinate M1(M__/(M2*M0));
-    Coordinate N2(N__/(N3*N1*N0));
-    Coordinate K(K__);
-    
-    for (Coordinate n2 = 0; n2 < N2; n2++) {
-      for (Coordinate m1 = 0; m1 < M1; m1++) {
-        // First Loop: High compute intensity
-        for (Coordinate k = 0; k < K; k++) {
-          for (Coordinate n1 = 0; n1 < N1; n1++) {
-            Coordinate n = n3 * N2 * N1 * N0 + n2 * N1 * N0 + n1 * N0 + n0;
-            #pragma unroll
-            for (Coordinate m0 = 0; m0 < M0; m0++) {
-              Coordinate m = m2 * M1 * M0 + m1 * M0 + m0;
-              Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, buffer_[n1][m0], a_[m * K__ + k], b_[k * N__ + n]);
-              buffer_[n1][m0] += a_[m * K__ + k] * b_[k * N__ + n];
-            }
-            Trace(3, "Loop 1: Finish M0");
-          }
-          Trace(3, "Loop 1: Finish N1");
-        }
-        Trace(3, "Loop 1: Finish K");
-        // Second Loop: Low compute intensity
+  for (Coordinate n2 = 0; n2 < N2; n2++) {
+    for (Coordinate m1 = 0; m1 < M1; m1++) {
+      // First Loop: High compute intensity
+      for (Coordinate k = 0; k < K; k++) {
         for (Coordinate n1 = 0; n1 < N1; n1++) {
           Coordinate n = n3 * N2 * N1 * N0 + n2 * N1 * N0 + n1 * N0 + n0;
           #pragma unroll
           for (Coordinate m0 = 0; m0 < M0; m0++) {
             Coordinate m = m2 * M1 * M0 + m1 * M0 + m0;
-            z_[m * N__ + n] = buffer_[n1][m0] * 17;
-            buffer_[n1][m0] = 0;
-            Trace(4, "Loop 2: Iteration %d, %d", m, n);
+            Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, buffer[n1 * M0 + m0], a_[m * K__ + k], b_[k * N__ + n]);
+            buffer[n1 * M0 + m0] += a_[m * K__ + k] * b_[k * N__ + n];
           }
-          Trace(3, "Loop 2: Finish M0");
+          Trace(3, "Loop 1: Finish M0");
         }
-        Trace(3, "Loop 2: Finish N1");
+        Trace(3, "Loop 1: Finish N1");
       }
-      Trace(3, "Loop: Finish M1");
+      Trace(3, "Loop 1: Finish K");
+      // Second Loop: Low compute intensity
+      for (Coordinate n1 = 0; n1 < N1; n1++) {
+        Coordinate n = n3 * N2 * N1 * N0 + n2 * N1 * N0 + n1 * N0 + n0;
+        #pragma unroll
+        for (Coordinate m0 = 0; m0 < M0; m0++) {
+          Coordinate m = m2 * M1 * M0 + m1 * M0 + m0;
+          y_[m * N__ + n] = buffer[n1 * M0 + m0] * 17;
+          buffer[n1 * M0 + m0] = 0;
+          Trace(4, "Loop 2: Iteration %d, %d", m, n);
+        }
+        Trace(3, "Loop 2: Finish M0");
+      }
+      Trace(3, "Loop 2: Finish N1");
     }
-    Trace(3, "Loop: Finish N2");
-    Trace(2, "Done.");
+    Trace(3, "Loop: Finish M1");
   }
-};
+  Trace(3, "Loop: Finish N2");
+  Trace(2, "Done.");
+}
 
 
 __CUDA_DEVICE__
@@ -147,24 +142,38 @@ FusionTest(
   Coordinate N,
   Value* a,
   Value* b,
-  Value* z
+  Value* y
   ) {
   
-  M__ = M;
-  K__ = K;
-  N__ = N;
 
-  for (Coordinate n3 = 0; n3 < N3; n3++) {
-    for (Coordinate m2 = 0; m2 < M2; m2++) {
-      for (Coordinate n0 = 0; n0 < N0; n0++) {
-        auto fused = new Loop1FusedLoop2<N1, M0>(n3, m2, n0, a, b, z);
-        printf("Build %d, %d, %d\n", n3, m2, n0);
-        fused->Bind(n3, m2, n0);
-      }
+  Coordinate M2 = opt::device_->M2;
+  Coordinate N0 = opt::device_->N0;
+
+  for (Coordinate m2 = 0; m2 < M2; m2++) {
+    for (Coordinate n0 = 0; n0 < N0; n0++) {
+      Trace(2, "Build: %d, %d", m2, n0);
+      queueda::Bind(GetBlock(), m2, n0, Loop1Loop2FusedTiled);
     }
   }
 }
 
+__CUDA_GLOBAL__
+void 
+FTBuildKernel(
+  Coordinate M,
+  Coordinate K,
+  Coordinate N,
+  Value* a,
+  Value* b,
+  Value* y) {
+   
+  BuilderFunction build_func = 
+    [M, K, N, a, b, y] () {
+      FusionTest(M, K, N, a, b, y);
+    };
+
+  queueda::Build(build_func);
+}
 
 __CUDA_GLOBAL__
 void 
@@ -174,14 +183,15 @@ FTKernel(
   Coordinate N,
   Value* a,
   Value* b,
-  Value* z) {
-   
-  BuilderFunction build_func = 
-    [M, K, N, a, b, z] () {
-      FusionTest(M, K, N, a, b, z);
-    };
+  Value* y) {
 
-  queueda::Build(build_func);
+  M__ = M;
+  K__ = K;
+  N__ = N;
+  a_ = a;
+  b_ = b;
+  y_ = y;
+
   queueda::Run();
 }
 
@@ -190,65 +200,60 @@ inline
 int
 RunFT(Coordinate M, Coordinate K, Coordinate N) {
 
-  queueda::Init();
+  Coordinate N0 = opt::host_->N0;
+  Coordinate M2 = opt::host_->M2;
+  Coordinate N3 = opt::host_->N3;
 
-  SimpleTensor* af = new SimpleTensor({M, K}, "A");
-  SimpleTensor* bf = new SimpleTensor({K, N}, "B");
-  SimpleTensor* zf = new SimpleTensor({M, N}, "Z");
-  
-  for (int m = 0; m < M; m++) {
-    for (int k = 0; k < K; k++) {
-      af->v_[m * K + k] = rand() % 255;
-    }
-  }
-  //af->Print();
-  for (int k = 0; k < K; k++) {
-    for (int n = 0; n < N; n++) {
-      bf->v_[k * N + n] = rand() % 255;
-    }
-  }
-  //bf->Print();
-  for (int m = 0; m < M; m++) {
-    for (int n = 0; n < N; n++) {
-      zf->v_[m * N + n] = 0;
-    }
-  }
+  queueda::Init(N3, M2, N0);
+
+  SimpleTensor* af = new SimpleTensor({M, K}, "A", {0, 255});
+  SimpleTensor* bf = new SimpleTensor({K, N}, "B", {0, 255});
+  SimpleTensor* yf = new SimpleTensor({M, N}, "Y");
+    
+  auto ad = af->CopyArrayToDevice();
+  auto bd = bf->CopyArrayToDevice();
+  auto yd = yf->CopyArrayToDevice();
 
 #ifdef __CUDACC__
 
-  auto ad = AllocArrayOnDevice<Value>(M * K);
-  auto bd = AllocArrayOnDevice<Value>(K * N);
-  auto zd = AllocArrayOnDevice<Value>(M * N);
-  SetDeviceArray<Value>(ad, af->v_, M * K);
-  SetDeviceArray<Value>(bd, bf->v_, K * N);
-  SetDeviceArray<Value>(zd, zf->v_, M * N);
-  
-  FTKernel<<<N3, M2*QUEUDA_MAX_THREADS_PER_WARP>>>(M, K, N, ad, bd, zd);
+  cudaDeviceSetLimit(cudaLimitMallocHeapSize, 100000000*sizeof(Value));
+  gpuErrchk(cudaPeekAtLastError());
+
+  FTBuildKernel<<<N3, 1>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
   cudaDeviceSynchronize();
-  SetHostArray<Value>(zf->v_, zd, M * N);
+
+  FTKernel<<<N3, M2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  gpuErrchk(cudaPeekAtLastError());
+  FTKernel<<<N3, M2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  gpuErrchk(cudaPeekAtLastError());
+  FTKernel<<<N3, M2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  gpuErrchk(cudaPeekAtLastError());
+
+  cudaDeviceSynchronize();
 
 #else
 
   
-  FTKernel(M, K, N, af->v_, bf->v_, zf->v_);
+  FTBuildKernel(M, K, N, ad, bd, yd);
+  FTKernel(M, K, N, ad, bd, yd);
 
 #endif
 
-
-  zf->Print();
+  yf->CopyArrayFromDevice(yd);
+  yf->Print();
   
-  SimpleTensor* z_ref = new SimpleTensor({M, N}, "Z_REF");
+  SimpleTensor* y_ref = new SimpleTensor({M, N}, "Y_REF");
   for (int m = 0; m < M; m++) {
     for (int n = 0; n < N; n++) {
       for (int k = 0; k < K; k++) {
-        z_ref->v_[m * N + n] += af->v_[m * K + k] * bf->v_[k * N + n];
+        y_ref->v_[m * N + n] += af->v_[m * K + k] * bf->v_[k * N + n];
       }
-      z_ref->v_[m * N + n] = z_ref->v_[m * N + n] * 17;
+      y_ref->v_[m * N + n] = y_ref->v_[m * N + n] * 17;
     }   
   }
   
-  return zf->CheckMismatches(z_ref);
+  return yf->CheckMismatches(y_ref);
 
 }
 
@@ -257,6 +262,69 @@ RunFT(Coordinate M, Coordinate K, Coordinate N) {
 int 
 main(int argc, char** argv) {
   
-  static const Coordinate NUM_PASSES = 4;
-  RunFT(M2 * NUM_PASSES * M0, 8, N3 * NUM_PASSES * N1 * N0);
+  opt::host_ = new opt::DynamicOptions();
+  
+  if (argc > 1)
+  {
+    opt::host_->N3 = std::atoi(argv[1]);
+  }
+  if (argc > 2)
+  {
+    opt::host_->M2 = std::atoi(argv[2]);
+  }
+  if (argc > 3)
+  {
+    opt::host_->N0 = std::atoi(argv[3]);
+  }
+  
+  Coordinate NUM_PASSES_M = 4;
+  
+  if (argc > 4)
+  {
+    NUM_PASSES_M = std::atoi(argv[4]);
+  }
+
+  Coordinate NUM_PASSES_N = 5;
+  
+  if (argc > 5)
+  {
+    NUM_PASSES_N = std::atoi(argv[5]);
+  }
+
+  Coordinate K = 8;
+
+  if (argc > 6)
+  {
+    K = std::atoi(argv[6]);
+  }
+  
+  if (argc > 7)
+  {
+    opt::host_->M0 = std::atoi(argv[7]);
+  }
+  
+  if (argc > 8)
+  {
+    opt::host_->N1 = std::atoi(argv[8]);
+  }
+  
+  SET_DEVICE_OPTIONS(opt::DynamicOptions, opt::device_, opt::host_);
+
+  Coordinate M = opt::host_->M2 * NUM_PASSES_M * opt::host_->M0;
+  Coordinate N = opt::host_->N3 * NUM_PASSES_N * opt::host_->N1 * opt::host_->N0;
+  
+  Coordinate a_size = M * K * sizeof(Value);
+  Coordinate b_size = K * N * sizeof(Value);
+  Coordinate z_size = M * N * sizeof(Value);
+  Coordinate num_muls = M * K * N;
+
+  printf("M2: %'d, M1: %'d, M0: %'d, N3: %'d, N2: %'d, N1: %'d, N0: %'d\n", opt::host_->M2, NUM_PASSES_M, opt::host_->M0, opt::host_->N3, NUM_PASSES_N, opt::host_->N1, opt::host_->N0);
+  printf("M: %'d, K: %'d, N: %'d\n", M, K, N);
+  printf("Size of A in bytes: %'d\n", a_size);
+  printf("Size of B in bytes: %'d\n", b_size);
+  printf("Size of Z in bytes: %'d\n", z_size);
+  printf("Total GPU memory footprint in bytes: %'d\n", a_size + b_size + z_size);
+  printf("Total Muls: %'d\n", num_muls);
+
+  return RunFT(M, K, N);
 }

@@ -39,337 +39,106 @@
 
 using Tag = uint8_t;
 
-#ifdef __CUDACC__
-
-#define __CUDA_CALLABLE__ __host__ __device__
-#define __CUDA_DEVICE__ __device__
-
-#define __CUDA_GLOBAL__ __global__
-
-#define __CUDA_LAUNCH_BOUNDS__(T, B) __launch_bounds__(T, B)
-
-#define __CUDA_SHARED__ __shared__
-
-
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-inline void gpuAssert(cudaError_t code, const char *file, int64_t line, bool abort=true)
-{
-    if (code != cudaSuccess) 
-    {
-        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line); 
-        if (abort) exit(code);
-    }
-}
-
-template <
-  typename T
->
-T* AllocOnDevice() {
-  T* res;
-  gpuErrchk(cudaMalloc((void**)&res, sizeof(T)));
-  return res;
-}
-
-template <
-  typename T
->
-T* AllocArrayOnDevice(const size_t& len) {
-  T* res;
-  gpuErrchk(cudaMalloc((void**)&res, sizeof(T) * len));
-  return res;
-}
-    
-template <
-  typename T
->
-void SetDeviceValue(T* dst_ptr, T* new_p_val) {
-  gpuErrchk(cudaMemcpy(dst_ptr, new_p_val, sizeof(T), cudaMemcpyHostToDevice));
-}
-
-template <
-  typename T
->
-void SetDeviceArray(T* dst_ptr, T* src_ptr, int arr_size) {
-  gpuErrchk(cudaMemcpy(dst_ptr, src_ptr, sizeof(T)*arr_size, cudaMemcpyHostToDevice));
-}
-
-
-void SetDeviceString(char** dst_ptr, char* src_ptr) {
-  auto len = std::strlen(src_ptr);
-  char* dst;
-  gpuErrchk(cudaMalloc((void**)&dst, sizeof(char)*(len+1)));
-  SetDeviceArray<char>(dst, src_ptr, len+1);
-  SetDeviceValue<char*>(dst_ptr, &dst);
-}
-
-template <
-  typename T
->
-void SetHostValue(T* dst_ptr, T* new_p_val) {
-  gpuErrchk(cudaMemcpy(dst_ptr, new_p_val, sizeof(T), cudaMemcpyDeviceToHost));
-}
-
-template <
-  typename T
->
-void SetHostArray(T* dst_ptr, T* src_ptr, int arr_size) {
-  gpuErrchk(cudaMemcpy(dst_ptr, src_ptr, sizeof(T)*arr_size, cudaMemcpyDeviceToHost));
-}
-
-#include <cuda/atomic>
-#include <nvfunctional>
-
-
-#else
-
-#define __CUDA_CALLABLE__
-#define __CUDA_DEVICE__
-
-#define __CUDA_GLOBAL__
-
-#define __CUDA_LAUNCH_BOUNDS__(T, B)
-
-#define __CUDA_SHARED__
-
-#include <atomic>
-#include <functional>
-
-#endif 
-
-#include "options.hpp"
-
-
-// Utility functions to replace std::lib on device
+#include "device-utils.hpp"
 
 namespace queueda {
-
-#ifdef __CUDACC__
-
-using BuilderFunction = nvstd::function<void()>;
-
-#else
-
-using BuilderFunction = std::function<void()>;
-
-#endif
-
-template <
-  typename T
->
-__CUDA_CALLABLE__ inline
-void PrintArray(T* arr, int size) {
-  for (int x = 0; x < size; x++) {
-    printVal(arr[x]);
-  }
-}
-
-template <
-  typename T
->
-struct Tagged {
-  bool is_tag_;
-  union {
-    T value_;
-    Tag tag_;
-  };
-
-  __CUDA_CALLABLE__ inline
-  Tagged() : is_tag_(false) {}
-
-  __CUDA_CALLABLE__ inline
-  Tagged(const T& val) : is_tag_(false), value_(val) {
-  }
-
-  __CUDA_CALLABLE__ inline
-  Tagged(const Tag& t) : is_tag_(true), tag_(t) {
-  }
-};
-
-template <
-  typename A,
-  typename B
->
-struct Tuple {
-  A a;
-  B b;
-};  // Assert that C++17 structured binding should work for this type.
-
-template <
-  typename A,
-  typename B,
-  typename C
->
-struct Triple {
-  A a;
-  B b;
-  C c;
-};  // Assert that C++17 structured binding should work for this type.
-
-template <
-  typename A,
-  typename B,
-  typename C,
-  typename D
->
-struct Quadruple {
-  A a;
-  B b;
-  C c;
-  D d;
-};  // Assert that C++17 structured binding should work for this type.
-
-
-template <
-  typename A,
-  typename B
->
-__CUDA_CALLABLE__ inline
-Tuple<A, B>
-MakeTuple(const A& a, const B& b) {
-  Tuple<A, B> result;
-  result.a = a;
-  result.b = b;
-  return result;
-}
-
-template <
-  typename A,
-  typename B,
-  typename C
->
-__CUDA_CALLABLE__ inline
-Triple<A, B, C>
-MakeTriple(const A& a, const B& b, const C& c) {
-  Triple<A, B, C> result;
-  result.a = a;
-  result.b = b;
-  result.c = c;
-  return result;
-}
-
-template <
-  typename A,
-  typename B,
-  typename C,
-  typename D
->
-__CUDA_CALLABLE__ inline
-Quadruple<A, B, C, D>
-MakeQuadruple(const A& a, const B& b, const C& c, const D& d) {
-  Quadruple<A, B, C, D> result;
-  result.a = a;
-  result.b = b;
-  result.c = c;
-  result.d = d;
-  return result;
-}
 
 // Type defs
 
 // TODO: something more useful here, with instance numbering.
 using Name = const char[];
 
-class Node;
 
 // Node tracking
-// These must be initialized to NULL
+// Work around inability to call constructor in CUDA global memory;
 __CUDA_DEVICE__
-static Node* registry__[options::kMaxBlocksPerGPU][options::kMaxWarpsPerBlock][options::kMaxThreadsPerWarp][options::kMaxSequentialNodes];
+static char registry__[options::kMaxBlocksPerGPU][options::kMaxWarpsPerBlock][options::kMaxThreadsPerWarp][options::kMaxSequentialNodes][sizeof(NodeFunction)];
+
+__CUDA_DEVICE__
+NodeFunction* GetNode(int b, int w, int t, int s) {
+  auto p = reinterpret_cast<NodeFunction*>(&registry__[b][w][t][s][0]);
+  return p;
+}
+
+__CUDA_DEVICE__
+void SetNode(int b, int w, int t, int s, NodeFunction f) {
+  auto p = reinterpret_cast<NodeFunction*>(&registry__[b][w][t][s][0]);
+  *p = f;
+}
+
 
 // Queue buffering
 __CUDA_DEVICE__
 static __CUDA_SHARED__ char buffering__[options::kMaxQBuffering];
 __CUDA_DEVICE__
-static int buffer_end__;
+static int buffer_end__[options::kMaxBlocksPerGPU];
 
 
 
-class Node 
-{
- public:
+__CUDA_DEVICE__ inline
+void Bind(const int & b, const int & w, const int& t, NodeFunction f) {
   
-  char* instance_name_;
-  int block_;
-  int warp_;
-  int thread_;
-  char msgbuff_[options::kMsgBufferSize];
-  int buff_start_;
- 
-  __CUDA_DEVICE__
-  Node(Name instance_name) : block_(-1), warp_(-1), thread_(-1)
-  {
-   
-    // Work around lack of strlen/strdup
-    int cur = 0;
-    while (instance_name[cur]) {
-      assert(cur < options::kMsgBufferSize);
-      cur++;
-    }
-    for (int x = 0; x < cur; x++) {
-      msgbuff_[x] = instance_name[x];
-    }
-
-    msgbuff_[cur++] = '_';
-    msgbuff_[cur++] = '%';
-    msgbuff_[cur++] = 'd';
-    msgbuff_[cur++] = '_';
-    msgbuff_[cur++] = '%';
-    msgbuff_[cur++] = 'd';
-    msgbuff_[cur++] = '_';
-    msgbuff_[cur++] = '%';
-    msgbuff_[cur++] = 'd';
-    msgbuff_[cur++] = ':';
-    msgbuff_[cur++] = ' ';
-    msgbuff_[cur] = 0;
-    buff_start_ = cur;
-
-  }
-
-  __CUDA_DEVICE__ inline
-  void Bind(const int & b, const int & w, const int& t) {
-    for (int x = 0; x < options::kMaxSequentialNodes; x++) {
-      if (registry__[b][w][t][x] == 0) {
-        registry__[b][w][t][x] = this;
-        block_ = b;
-        warp_ = w;
-        thread_ = t;
-        //printf("SUCCCESSSS %s_%d_%d_%d: %lu\n", instance_name_, b, w, t, (unsigned long)registry__[b][w][t][x]);
-        return;
-      }
-    }
-    //assert(false);
-    //printf("WARRNNN %s_%d_%d_%d\n", instance_name_, b, w, t);
-  }
-  
-  __CUDA_DEVICE__ inline
-  virtual void Run() {
-  }
-
-  template <
-    typename... Arguments
-  >
-  __CUDA_DEVICE__ inline
-  void Trace(int level, const char* format, Arguments... args) {
-
-    if (level > options::device_->kCurrentLibraryTraceLevel) {
-      //printf("%d\n", options::device_->kCurrentLibraryTraceLevel);
+  for (int x = 0; x < options::kMaxSequentialNodes; x++) {
+    auto node = GetNode(b, w, t, x);
+    // Check if it holds a function, not for NULL pointer.
+    if (!(*node)) {
+      SetNode(b, w, t, x, f);
       return;
     }
-    
-    // Work around the lack of strcpy in CUDA.
-    int cur = 0;
-    while (format[cur]) {
-      msgbuff_[buff_start_ + cur] = format[cur];
-      cur++;
-    }
-    msgbuff_[buff_start_ + cur] = '\n';
-    msgbuff_[buff_start_ + cur + 1] = 0;
-    printf(msgbuff_, block_, warp_, thread_, args...);
+  }
+  //assert(false); TEMPORARY: CAUSING WARNING. NEEDS REPLACEMENT.
+}
+
+template <
+  typename... Arguments
+>
+__CUDA_DEVICE__ inline
+void Trace(int level, const char* format, Arguments... args) {
+
+  if (level > options::device_->kCurrentLibraryTraceLevel) {
+    //printf("%d\n", options::device_->kCurrentLibraryTraceLevel);
     return;
   }
+  
+  // Work around the lack of strcpy in CUDA.
+  char msgbuff[options::kMsgBufferSize];
+  size_t mcur = 0; 
+  msgbuff[mcur++] = 'N';
+  msgbuff[mcur++] = 'o';
+  msgbuff[mcur++] = 'd';
+  msgbuff[mcur++] = 'e';
+  msgbuff[mcur++] = '_';
+  msgbuff[mcur++] = '%';
+  msgbuff[mcur++] = 'l';
+  msgbuff[mcur++] = 'l';
+  msgbuff[mcur++] = 'd';
+  msgbuff[mcur++] = '_';
+  msgbuff[mcur++] = '%';
+  msgbuff[mcur++] = 'l';
+  msgbuff[mcur++] = 'l';
+  msgbuff[mcur++] = 'd';
+  msgbuff[mcur++] = '_';
+  msgbuff[mcur++] = '%';
+  msgbuff[mcur++] = 'l';
+  msgbuff[mcur++] = 'l';
+  msgbuff[mcur++] = 'd';
+  msgbuff[mcur++] = ':';
+  msgbuff[mcur++] = ' ';
 
+  int cur = 0;
+  while (format[cur]) {
+    msgbuff[mcur++] = format[cur++];
+  }
+
+  msgbuff[mcur++] = '\n';
+  msgbuff[mcur++] = 0;
+
+  printf(msgbuff, GetBlock(), GetWarp(), GetThread(), args...);
+  return;
+}
+
+class Node {
 };
-
 
 template <
   typename T,
@@ -393,20 +162,16 @@ class QO {
   }
  public:
 
-  Node* producer_ = NULL;
   QI<T, N>* connections_[options::kMaxQFanout];
   int num_connections_ = 0;
   
   __CUDA_CALLABLE__ inline
-  QO<T, N>(Node* prod) : producer_(prod), num_connections_(0) {
+  QO<T, N>() : num_connections_(0) {
     for (int x = 0; x < options::kMaxQFanout; x++) {
       connections_[x] = NULL;
     }
   }
   
-  __CUDA_CALLABLE__ inline
-  QO<T, N>() : QO<T, N>(NULL) {}
-
   ~QO<T, N>() = default;
   
   __CUDA_CALLABLE__ inline
@@ -475,9 +240,9 @@ class SPSCQueue {
 
   __CUDA_DEVICE__ inline
   SPSCQueue<T>(int size = options::kDefaultQSize) : size_(size) {
-    data_ = reinterpret_cast<Tagged<T>*>(&buffering__[buffer_end__]);
-    buffer_end__ += size_ * sizeof(Tagged<T>);
-    assert(buffer_end__ < options::kMaxQBuffering);
+    data_ = reinterpret_cast<Tagged<T>*>(&buffering__[buffer_end__[GetBlock()]]);
+    buffer_end__[GetBlock()] += size_ * sizeof(Tagged<T>);
+    assert(buffer_end__[GetBlock()] < options::kMaxQBuffering);
     for (int x = 0; x < size_; x++) {
       data_[x] = Tagged<T>();
     }
@@ -597,7 +362,6 @@ class QI {
 
  public:
 
-  Node* producer_ = NULL;
   SPSCQueue<T> queue_;
   
   QI<T, N>() = default;
@@ -605,8 +369,6 @@ class QI {
 
   __CUDA_CALLABLE__ inline
   QI<T, N>(QO<T, N>* qo, int size = options::kDefaultQSize) : queue_(size) {
-    assert(qo->producer_ != NULL);
-    producer_ = qo->producer_;
     assert(qo->num_connections_ <= options::kMaxQFanout);
     qo->connections_[qo->num_connections_] = this;
     qo->num_connections_++;
@@ -711,31 +473,26 @@ void AllFinish(T* arr, int size, const Tag& t = 1) {
 __CUDA_DEVICE__ inline
 void Build(BuilderFunction build) {
 
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
+  // One thread from every block does this.
+  if (GetWarp() == 0 & GetThread() == 0) {
     for (int s = 0; s < options::kMaxSequentialNodes; s++) {
-      for (int b = 0; b < options::kMaxBlocksPerGPU; b++) {
-        for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
-          for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
-            registry__[b][w][t][s] = NULL;
-          }
+      for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
+        for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
+          // Use C++ "placement" new operator to control memory placement. 
+          new (&registry__[GetBlock()][w][t][s]) NodeFunction();
         }
       }
     }
-
-    buffer_end__ = 0;
-
-    printf("Starting build.\n");
+    
+    printf("Block %lld Starting build.\n", GetBlock());
+    buffer_end__[GetBlock()] = 0;
 
     if (build)
       build();
 
-    printf("Build Complete!\n");
+    printf("Block %lld build Complete!\n", GetBlock());
 
   }
-
-  // Everyone waits until build completes
-  __syncthreads();
-
 }
 
 
@@ -752,9 +509,11 @@ void Run() {
   int my_wid = threadIdx.x / options::kMaxThreadsPerWarp;
   
   for (int s = 0; s < options::kMaxSequentialNodes; s++) {
-    if (registry__[my_bid][my_wid][my_tid][s] != NULL) {
-      registry__[my_bid][my_wid][my_tid][s]->Trace(2, "======= Beginning (%d) =======", s);
-      registry__[my_bid][my_wid][my_tid][s]->Run();
+    auto node = GetNode(my_bid, my_wid, my_tid, s);
+    // Check if it holds a function, not for NULL pointer
+    if (*node) {
+      Trace(0, "======= Beginning (%d) =======", s);
+      (*node)();
     }
   }
 }
@@ -763,22 +522,28 @@ void Run() {
 
 inline
 void Build(BuilderFunction build) {
+
   for (int s = 0; s < options::kMaxSequentialNodes; s++) {
     for (int b = 0; b < options::kMaxBlocksPerGPU; b++) {
+      buffer_end__[b] = 0;
       for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
         for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
-          registry__[b][w][t][s] = NULL;
+          // Use C++ "placement" new operator to control memory placement. 
+          new (&registry__[b][w][t][s]) NodeFunction();
         }
       }
     }
   }
-  buffer_end__ = 0;
   
-  printf("Starting build.\n");
+  for (int b = 0; b < options::host_->kActiveBlocksPerGPU; b++) {
+    current_block__ = b;
+    printf("Block %lld Starting build.\n", GetBlock());
+    if (build) {
+      build();
+    }
+    printf("Block %lld build Complete!\n", GetBlock());
+  }
 
-  build();
-  
-  printf("Build Complete!\n");
 
 }
 
@@ -787,11 +552,16 @@ void Run() {
   printf("=============================\nBeginning Run\n=============================\n");
   for (int s = 0; s < options::kMaxSequentialNodes; s++) {
     for (int b = 0; b < options::kMaxBlocksPerGPU; b++) {
+      current_block__ = b;
       for (int w = 0; w < options::kMaxWarpsPerBlock; w++) {
+        current_warp__ = w;
         for (int t = 0; t < options::kMaxThreadsPerWarp; t++) {
-          if (registry__[b][w][t][s] != NULL) {
-            registry__[b][w][t][s]->Trace(2, "======= Beginning (%d) =======", s);
-            registry__[b][w][t][s]->Run();
+          current_thread__ = t;
+          auto node = GetNode(b, w, t, s);
+          // Check if it holds a function, not for NULL pointer.
+          if (*node) {
+            Trace(2, "======= Beginning (%d) =======", s);
+            (*node)();
           }
         }
       }
@@ -803,9 +573,14 @@ void Run() {
 
 #endif
 
-void Init()
+void Init(int B, int W, int T)
 {
   AddOptions();
+  
+  options::host_->kActiveBlocksPerGPU = B;
+  options::host_->kActiveWarpsPerBlock = W;
+  options::host_->kActiveThreadsPerWarp = T;
+
   ReadOptions();
 }
 
