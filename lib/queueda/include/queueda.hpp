@@ -484,13 +484,13 @@ void Build(BuilderFunction build) {
       }
     }
     
-    printf("Block %lld Starting build.\n", GetBlock());
+    //printf("Block %lld Starting build.\n", GetBlock());
     buffer_end__[GetBlock()] = 0;
 
     if (build)
       build();
 
-    printf("Block %lld build Complete!\n", GetBlock());
+    //printf("Block %lld build Complete!\n", GetBlock());
 
   }
 }
@@ -537,11 +537,11 @@ void Build(BuilderFunction build) {
   
   for (int b = 0; b < options::host_->kActiveBlocksPerGPU; b++) {
     current_block__ = b;
-    printf("Block %lld Starting build.\n", GetBlock());
+    //printf("Block %lld Starting build.\n", GetBlock());
     if (build) {
       build();
     }
-    printf("Block %lld build Complete!\n", GetBlock());
+    //printf("Block %lld build Complete!\n", GetBlock());
   }
 
 

@@ -36,8 +36,8 @@ using namespace queueda;
 namespace opt {
 
 struct DynamicOptions {
-  Coordinate N3 = 1; // BLOCKS_PER_GPU
-  Coordinate M2 = 8; // WARPS_PER_BLOCK
+  Coordinate M2 = 1; // BLOCKS_PER_GPU
+  Coordinate N3 = 8; // WARPS_PER_BLOCK
   Coordinate N0 = 32;// THREADS_PER_WARP
   Coordinate N1 = 4; // Buffer N
   Coordinate M0 = 4; // Buffer M, and UNROLLING_FACTOR
@@ -69,8 +69,8 @@ __CUDA_DEVICE__
 void Loop1Loop2FusedTiled() {
                              
   Coordinate n0 = GetThread();
-  Coordinate m2 = GetWarp();
-  Coordinate n3 = GetBlock();
+  Coordinate n3 = GetWarp();
+  Coordinate m2 = GetBlock();
 
   Coordinate M0 = opt::device_->M0;
   Coordinate M2 = opt::device_->M2;
@@ -146,13 +146,13 @@ FusionTest(
   ) {
   
 
-  Coordinate M2 = opt::device_->M2;
+  Coordinate N3 = opt::device_->N3;
   Coordinate N0 = opt::device_->N0;
 
-  for (Coordinate m2 = 0; m2 < M2; m2++) {
+  for (Coordinate n3 = 0; n3 < N3; n3++) {
     for (Coordinate n0 = 0; n0 < N0; n0++) {
-      Trace(2, "Build: %d, %d", m2, n0);
-      queueda::Bind(GetBlock(), m2, n0, Loop1Loop2FusedTiled);
+      Trace(2, "Build: %d, %d", n3, n0);
+      queueda::Bind(GetBlock(), n3, n0, Loop1Loop2FusedTiled);
     }
   }
 }
@@ -204,7 +204,7 @@ RunFT(Coordinate M, Coordinate K, Coordinate N) {
   Coordinate M2 = opt::host_->M2;
   Coordinate N3 = opt::host_->N3;
 
-  queueda::Init(N3, M2, N0);
+  queueda::Init(M2, N3, N0);
 
   SimpleTensor* af = new SimpleTensor({M, K}, "A", {0, 255});
   SimpleTensor* bf = new SimpleTensor({K, N}, "B", {0, 255});
@@ -219,15 +219,15 @@ RunFT(Coordinate M, Coordinate K, Coordinate N) {
   cudaDeviceSetLimit(cudaLimitMallocHeapSize, 100000000*sizeof(Value));
   gpuErrchk(cudaPeekAtLastError());
 
-  FTBuildKernel<<<N3, 1>>>(M, K, N, ad, bd, yd);
+  FTBuildKernel<<<M2, 1>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
   cudaDeviceSynchronize();
 
-  FTKernel<<<N3, M2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  FTKernel<<<M2, N3*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  FTKernel<<<N3, M2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  FTKernel<<<M2, N3*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  FTKernel<<<N3, M2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  FTKernel<<<M2, N3*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
 
   cudaDeviceSynchronize();
@@ -266,11 +266,11 @@ main(int argc, char** argv) {
   
   if (argc > 1)
   {
-    opt::host_->N3 = std::atoi(argv[1]);
+    opt::host_->M2 = std::atoi(argv[1]);
   }
   if (argc > 2)
   {
-    opt::host_->M2 = std::atoi(argv[2]);
+    opt::host_->N3 = std::atoi(argv[2]);
   }
   if (argc > 3)
   {

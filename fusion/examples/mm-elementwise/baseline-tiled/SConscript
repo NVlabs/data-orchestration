@@ -27,8 +27,13 @@
 
 Import('env')
 
-subdirs = ['mm-only', 'ele-only', 'baseline', 'baseline-tiled', 'fused', 'fused-tiled', 'decoupled', 'decoupled-tiled']
+env2 = env.Clone()
 
-for subdir in subdirs:
-    env.SConscript('%s/SConscript' % subdir, {'env': env})
+if('GPU' in env2):
+    sources = ['mm-elementwise-baseline-tiled.cu']
+    env2.Program(target = 'mm-elementwise-baseline-tiled.gpu.bin', source = sources)
+else:
+    sources = ['mm-elementwise-baseline-tiled.cpp']
+    env2.Program(target = 'mm-elementwise-baseline-tiled.bin', source = sources)
+
 

@@ -31,10 +31,6 @@
 using namespace queueda;
 
 
-// Static options
-static const Coordinate K0 = 8; // UNROLLING_FACTOR
-
-
 // Dynamic options, shared between host and device,
 // with default values.
 namespace opt {
@@ -54,60 +50,16 @@ __CUDA_DEVICE__ DynamicOptions* device_;
 __CUDA_DEVICE__
 Coordinate M__;
 __CUDA_DEVICE__
-Coordinate K__;
-__CUDA_DEVICE__
 Coordinate N__;
 
-__CUDA_DEVICE__
-Value* a_;
-__CUDA_DEVICE__
-Value* b_;
 __CUDA_DEVICE__
 Value* z_;
 __CUDA_DEVICE__
 Value* y_;
 
-__CUDA_DEVICE__
-void Loop1() {
-
-  Trace(2, "Begin Loop1.");
-  Coordinate n0 = GetThread();
-  Coordinate m1 = GetBlock();
-  Coordinate n2 = GetWarp();
-
-  Coordinate M1 = opt::device_->M1;
-  Coordinate N2 = opt::device_->N2;
-  Coordinate N0 = opt::device_->N0;
-
-  Coordinate M0(M__/M1);
-  Coordinate N1(N__/(N2 * N0));
-  Coordinate K1(K__/K0);
-
-  // First Loop: High compute intensity
-  for (Coordinate n1 = 0; n1 < N1; n1++) {
-    Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
-    for (Coordinate m0 = 0; m0 < M0; m0++) {
-      Coordinate m = m1 * M0 + m0;
-      Value tmp = 0;
-      for (Coordinate k1 = 0; k1 < K1; k1++) {
-        #pragma unroll
-        for (Coordinate k0 = 0; k0 < K0; k0++) {
-          Coordinate k = k1 * K0 + k0;
-          Trace(4, "Loop 1: Iteration %d, %d, %d: %d += %d * %d", m, n, k, tmp, a_[m * K__ + k], b_[k * N__ + n]);
-          tmp += a_[m * K__ + k] * b_[k * N__ + n];
-        }
-      }
-      z_[m * N__ + n] = tmp;
-      Trace(3, "Loop 1: Finish K");
-    }
-    Trace(3, "Loop 1: Finish M0");
-  }
-  Trace(3, "Loop 1: Finish N1");
-  Trace(2, "Done.");
-}
 
 __CUDA_DEVICE__
-void Loop2() {
+void Elementwise() {
 
   Trace(2, "Begin Loop2.");
   Coordinate n0 = GetThread();
@@ -140,10 +92,7 @@ __CUDA_DEVICE__
 void
 BaselineTest(
   Coordinate M,
-  Coordinate K,
   Coordinate N,
-  Value* a,
-  Value* b,
   Value* z,
   Value* y
   ) {
@@ -154,8 +103,7 @@ BaselineTest(
 
   for (Coordinate n2 = 0; n2 < N2; n2++) {
     for (Coordinate n0 = 0; n0 < N0; n0++) {
-      queueda::Bind(GetBlock(), n2, n0, Loop1);
-      queueda::Bind(GetBlock(), n2, n0, Loop2);
+      queueda::Bind(GetBlock(), n2, n0, Elementwise);
     }
   }
 }
@@ -165,16 +113,13 @@ __CUDA_GLOBAL__
 void 
 BTBuildKernel(
   Coordinate M,
-  Coordinate K,
   Coordinate N,
-  Value* a,
-  Value* b,
   Value* z,
   Value* y) {
    
   BuilderFunction build_func = 
-    [M, K, N, a, b, z, y] () {
-      BaselineTest(M, K, N, a, b, z, y);
+    [M, N, z, y] () {
+      BaselineTest(M, N, z, y);
     };
 
   queueda::Build(build_func);
@@ -185,18 +130,12 @@ __CUDA_GLOBAL__
 void 
 BTKernel(
   Coordinate M,
-  Coordinate K,
   Coordinate N,
-  Value* a,
-  Value* b,
   Value* z,
   Value* y) {
    
   M__ = M;
-  K__ = K;
   N__ = N;
-  a_ = a;
-  b_ = b;
   z_ = z;
   y_ = y;
 
@@ -205,21 +144,17 @@ BTKernel(
 
 inline
 int
-RunBT(Coordinate M, Coordinate K, Coordinate N) {
+RunBT(Coordinate M, Coordinate N) {
 
   Coordinate M1 = opt::host_->M1;
   Coordinate N2 = opt::host_->N2;
   Coordinate N0 = opt::host_->N0;
 
   queueda::Init(M1, N2, N0);
-  
-  SimpleTensor* af = new SimpleTensor({M, K}, "A", {0, 255});
-  SimpleTensor* bf = new SimpleTensor({K, N}, "B", {0, 255});
-  SimpleTensor* zf = new SimpleTensor({M, N}, "Z");
+
+  SimpleTensor* zf = new SimpleTensor({M, N}, "Z", {0, 255});
   SimpleTensor* yf = new SimpleTensor({M, N}, "Y");
   
-  auto ad = af->CopyArrayToDevice();
-  auto bd = bf->CopyArrayToDevice();
   auto zd = zf->CopyArrayToDevice();
   auto yd = yf->CopyArrayToDevice();
   
@@ -229,15 +164,15 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
 #ifdef __CUDACC__
 
 
-  BTBuildKernel<<<M1, 1>>>(M, K, N, ad, bd, zd, yd);
+  BTBuildKernel<<<M1, 1>>>(M, N, zd, yd);
   gpuErrchk(cudaPeekAtLastError());
   cudaDeviceSynchronize();
 
-  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, N, zd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, N, zd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, N, zd, yd);
   gpuErrchk(cudaPeekAtLastError());
 
   cudaDeviceSynchronize();
@@ -245,8 +180,8 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
 #else
 
   
-  BTBuildKernel(M, K, N, ad, bd, zd, yd);
-  BTKernel(M, K, N, ad, bd, zd, yd);
+  BTBuildKernel(M, N,  zd, yd);
+  BTKernel(M, N, zd, yd);
 
 #endif
 
@@ -256,11 +191,7 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
   SimpleTensor* y_ref = new SimpleTensor({M, N}, "Y_REF");
   for (int m = 0; m < M; m++) {
     for (int n = 0; n < N; n++) {
-      y_ref->v_[m * N + n] = 0;
-      for (int k = 0; k < K; k++) {
-        y_ref->v_[m * N + n] += af->v_[m * K + k] * bf->v_[k * N + n];
-      }
-      y_ref->v_[m * N + n] = y_ref->v_[m * N + n] * 17;
+      y_ref->v_[m * N + n] = zf->v_[m * N + n] * 17;
     }   
   }
   
@@ -301,31 +232,20 @@ main(int argc, char** argv) {
   {
     NUM_PASSES_N = std::atoi(argv[5]);
   }
-
-  Coordinate K = 8;
-
-  if (argc > 6)
-  {
-    K = std::atoi(argv[6]);
-  }
   
   SET_DEVICE_OPTIONS(opt::DynamicOptions, opt::device_, opt::host_);
 
   Coordinate M = opt::host_->M1 * NUM_PASSES_M;
   Coordinate N = opt::host_->N2 * NUM_PASSES_N * opt::host_->N0;
   
-  Coordinate a_size = M * K * sizeof(Value);
-  Coordinate b_size = K * N * sizeof(Value);
   Coordinate z_size = M * N * sizeof(Value);
-  Coordinate num_muls = M * K * N;
+  Coordinate num_muls = M * N;
 
   printf("M1: %'d, M0: %'d, N2: %'d, N1: %'d, N0: %'d\n", opt::host_->M1, NUM_PASSES_M, opt::host_->N2, NUM_PASSES_N, opt::host_->N0);
-  printf("M: %'d, K: %'d, N: %'d\n", M, K, N);
-  printf("Size of A in bytes: %'d\n", a_size);
-  printf("Size of B in bytes: %'d\n", b_size);
+  printf("M: %'d, N: %'d\n", M, N);
   printf("Size of Z in bytes: %'d\n", z_size);
-  printf("Total GPU memory footprint in bytes: %'d\n", a_size + b_size + z_size);
+  printf("Total GPU memory footprint in bytes: %'d\n", z_size + z_size);
   printf("Total Muls: %'d\n", num_muls);
 
-  return RunBT(M, K, N);
+  return RunBT(M, N);
 }

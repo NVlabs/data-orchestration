@@ -37,8 +37,8 @@ using namespace queueda;
 namespace opt {
 
 struct DynamicOptions {
-  Coordinate N3 = 1; // BLOCKS_PER_GPU
-  Coordinate M2 = 8; // WARPS_PER_BLOCK
+  Coordinate M2 = 1; // BLOCKS_PER_GPU
+  Coordinate N3 = 8; // WARPS_PER_BLOCK
   Coordinate N0 = 32;// THREADS_PER_WARP
   Coordinate N1 = 4; // Buffer N
   Coordinate M0 = 4; // Buffer M, and UNROLLING_FACTOR
@@ -70,8 +70,8 @@ __CUDA_DEVICE__
 void Loop1(QO<Value, 4>* z_q) {
 
   Coordinate n0 = GetThread();
-  Coordinate m2 = GetWarp();
-  Coordinate n3 = GetBlock();
+  Coordinate n3 = GetWarp();
+  Coordinate m2 = GetBlock();
 
   Coordinate M0 = opt::device_->M0;
   Coordinate M2 = opt::device_->M2;
@@ -149,8 +149,8 @@ void Loop2(QI<Value, 4>* z_q) {
   Coordinate K(K__);
 
   Coordinate n0 = GetThread();
-  Coordinate m2 = GetWarp() - M2;
-  Coordinate n3 = GetBlock();
+  Coordinate m2 = GetBlock();
+  Coordinate n3 = GetWarp() - N3;
 
   Trace(2, "Begin Loop 2: %d, %d, %d, %d, %d, %d, %d, %d", N3, N2, N1, N0, M2, M1, M0, K);
 
@@ -202,24 +202,24 @@ DecoupledTest(
   Value* y
   ) {
   
-  Coordinate M2 = opt::device_->M2;
+  Coordinate N3 = opt::device_->N3;
   Coordinate N0 = opt::device_->N0;
   
-  auto qo = static_cast<QO<Value, 4>**>(std::malloc(M2 * N0 * sizeof(QO<Value, 4>*)));
-  auto qi = static_cast<QI<Value, 4>**>(std::malloc(M2 * N0 * sizeof(QI<Value, 4>*)));
+  auto qo = static_cast<QO<Value, 4>**>(std::malloc(N3 * N0 * sizeof(QO<Value, 4>*)));
+  auto qi = static_cast<QI<Value, 4>**>(std::malloc(N3 * N0 * sizeof(QI<Value, 4>*)));
   
-  for (Coordinate m2 = 0; m2 < M2; m2++) {
+  for (Coordinate n3 = 0; n3 < N3; n3++) {
     for (Coordinate n0 = 0; n0 < N0; n0++) {
-      qo[m2 * N0 + n0] = new QO<Value, 4>();
-      auto wrapped_loop1 = [=]() { return Loop1(qo[m2 * N0 + n0]); };
-      queueda::Bind(GetBlock(), m2, n0, wrapped_loop1);
+      qo[n3 * N0 + n0] = new QO<Value, 4>();
+      auto wrapped_loop1 = [=]() { return Loop1(qo[n3 * N0 + n0]); };
+      queueda::Bind(GetBlock(), n3, n0, wrapped_loop1);
     }
   }
-  for (Coordinate m2 = 0; m2 < M2; m2++) {
+  for (Coordinate n3 = 0; n3 < N3; n3++) {
     for (Coordinate n0 = 0; n0 < N0; n0++) {
-      qi[m2 * N0 + n0] = new QI<Value, 4>(qo[m2 * N0 + n0]);
-      auto wrapped_loop2 = [=]() { return Loop2(qi[m2 * N0 + n0]); };
-      queueda::Bind(GetBlock(), m2 + M2, n0, wrapped_loop2);
+      qi[n3 * N0 + n0] = new QI<Value, 4>(qo[n3 * N0 + n0]);
+      auto wrapped_loop2 = [=]() { return Loop2(qi[n3 * N0 + n0]); };
+      queueda::Bind(GetBlock(), n3 + N3, n0, wrapped_loop2);
     }
   }
 }
@@ -272,7 +272,7 @@ RunDT(Coordinate M, Coordinate K, Coordinate N) {
   Coordinate M2 = opt::host_->M2;
   Coordinate N3 = opt::host_->N3;
 
-  queueda::Init(N3, M2, N0);
+  queueda::Init(M2, N3, N0);
 
   SimpleTensor* af = new SimpleTensor({M, K}, "A", {0, 255});
   SimpleTensor* bf = new SimpleTensor({K, N}, "B", {0, 255});
@@ -287,15 +287,15 @@ RunDT(Coordinate M, Coordinate K, Coordinate N) {
   cudaDeviceSetLimit(cudaLimitMallocHeapSize, 100000000*sizeof(Value));
   gpuErrchk(cudaPeekAtLastError());
 
-  DTBuildKernel<<<N3, 1>>>(M, K, N, ad, bd, yd);
+  DTBuildKernel<<<M2, 1>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
   cudaDeviceSynchronize();
 
-  DTKernel<<<N3, M2*2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  DTKernel<<<M2, N3*2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  DTKernel<<<N3, M2*2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  DTKernel<<<M2, N3*2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  DTKernel<<<N3, M2*2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
+  DTKernel<<<M2, N3*2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
 
   cudaDeviceSynchronize();
@@ -334,11 +334,11 @@ main(int argc, char** argv) {
   
   if (argc > 1)
   {
-    opt::host_->N3 = std::atoi(argv[1]);
+    opt::host_->M2 = std::atoi(argv[1]);
   }
   if (argc > 2)
   {
-    opt::host_->M2 = std::atoi(argv[2]);
+    opt::host_->N3 = std::atoi(argv[2]);
   }
   if (argc > 3)
   {

@@ -63,12 +63,10 @@ Value* a_;
 __CUDA_DEVICE__
 Value* b_;
 __CUDA_DEVICE__
-Value* z_;
-__CUDA_DEVICE__
 Value* y_;
 
 __CUDA_DEVICE__
-void Loop1() {
+void MatMul() {
 
   Trace(2, "Begin Loop1.");
   Coordinate n0 = GetThread();
@@ -97,41 +95,12 @@ void Loop1() {
           tmp += a_[m * K__ + k] * b_[k * N__ + n];
         }
       }
-      z_[m * N__ + n] = tmp;
+      y_[m * N__ + n] = tmp;
       Trace(3, "Loop 1: Finish K");
     }
     Trace(3, "Loop 1: Finish M0");
   }
   Trace(3, "Loop 1: Finish N1");
-  Trace(2, "Done.");
-}
-
-__CUDA_DEVICE__
-void Loop2() {
-
-  Trace(2, "Begin Loop2.");
-  Coordinate n0 = GetThread();
-  Coordinate m1 = GetBlock();
-  Coordinate n2 = GetWarp();
-
-  Coordinate M1 = opt::device_->M1;
-  Coordinate N2 = opt::device_->N2;
-  Coordinate N0 = opt::device_->N0;
-
-  Coordinate M0(M__/M1);
-  Coordinate N1(N__/(N2*N0));
-
-  // Second Loop: Low compute intensity
-  for (Coordinate n1 = 0; n1 < N1; n1++) {
-    Coordinate n = n2 * N1 * N0 + n1 * N0 + n0;
-    for (Coordinate m0 = 0; m0 < M0; m0++) {
-      Coordinate m = m1 * M0 + m0;
-      y_[m * N__ + n] = z_[m * N__ + n] * 17;
-      Trace(4, "Loop 2: Iteration %d, %d", m, n);
-    }
-    Trace(3, "Loop 2: Finish M0");
-  }
-  Trace(3, "Loop 2: Finish N1");
   Trace(2, "Done.");
 }
 
@@ -144,7 +113,6 @@ BaselineTest(
   Coordinate N,
   Value* a,
   Value* b,
-  Value* z,
   Value* y
   ) {
   
@@ -154,8 +122,7 @@ BaselineTest(
 
   for (Coordinate n2 = 0; n2 < N2; n2++) {
     for (Coordinate n0 = 0; n0 < N0; n0++) {
-      queueda::Bind(GetBlock(), n2, n0, Loop1);
-      queueda::Bind(GetBlock(), n2, n0, Loop2);
+      queueda::Bind(GetBlock(), n2, n0, MatMul);
     }
   }
 }
@@ -169,12 +136,11 @@ BTBuildKernel(
   Coordinate N,
   Value* a,
   Value* b,
-  Value* z,
   Value* y) {
    
   BuilderFunction build_func = 
-    [M, K, N, a, b, z, y] () {
-      BaselineTest(M, K, N, a, b, z, y);
+    [M, K, N, a, b, y] () {
+      BaselineTest(M, K, N, a, b, y);
     };
 
   queueda::Build(build_func);
@@ -189,7 +155,6 @@ BTKernel(
   Coordinate N,
   Value* a,
   Value* b,
-  Value* z,
   Value* y) {
    
   M__ = M;
@@ -197,7 +162,6 @@ BTKernel(
   N__ = N;
   a_ = a;
   b_ = b;
-  z_ = z;
   y_ = y;
 
   queueda::Run();
@@ -215,12 +179,10 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
   
   SimpleTensor* af = new SimpleTensor({M, K}, "A", {0, 255});
   SimpleTensor* bf = new SimpleTensor({K, N}, "B", {0, 255});
-  SimpleTensor* zf = new SimpleTensor({M, N}, "Z");
   SimpleTensor* yf = new SimpleTensor({M, N}, "Y");
   
   auto ad = af->CopyArrayToDevice();
   auto bd = bf->CopyArrayToDevice();
-  auto zd = zf->CopyArrayToDevice();
   auto yd = yf->CopyArrayToDevice();
   
   //queueda::Build(build_func)
@@ -229,15 +191,15 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
 #ifdef __CUDACC__
 
 
-  BTBuildKernel<<<M1, 1>>>(M, K, N, ad, bd, zd, yd);
+  BTBuildKernel<<<M1, 1>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
   cudaDeviceSynchronize();
 
-  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
-  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, zd, yd);
+  BTKernel<<<M1, N2*options::kMaxThreadsPerWarp>>>(M, K, N, ad, bd, yd);
   gpuErrchk(cudaPeekAtLastError());
 
   cudaDeviceSynchronize();
@@ -245,8 +207,8 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
 #else
 
   
-  BTBuildKernel(M, K, N, ad, bd, zd, yd);
-  BTKernel(M, K, N, ad, bd, zd, yd);
+  BTBuildKernel(M, K, N, ad, bd, yd);
+  BTKernel(M, K, N, ad, bd, yd);
 
 #endif
 
@@ -260,7 +222,6 @@ RunBT(Coordinate M, Coordinate K, Coordinate N) {
       for (int k = 0; k < K; k++) {
         y_ref->v_[m * N + n] += af->v_[m * K + k] * bf->v_[k * N + n];
       }
-      y_ref->v_[m * N + n] = y_ref->v_[m * N + n] * 17;
     }   
   }
   
