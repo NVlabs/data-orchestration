@@ -25,15 +25,17 @@
 # * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # */
 
+workload = "mm-elementwise-fused"
+
 Import('env')
 
 env2 = env.Clone()
 
 if('GPU' in env2):
-    sources = ['mm-elementwise-fused.cu']
-    env2.Program(target = 'mm-elementwise-fused.gpu.bin', source = sources)
+    sources = [workload + ".cu"]
+    env2.Program(target = workload + ".gpu.bin", source = sources)
 else:
-    sources = ['mm-elementwise-fused.cpp']
-    env2.Program(target = 'mm-elementwise-fused.bin', source = sources)
+    sources = [workload + ".cpp"]
+    env2.Program(target = workload + ".bin", source = sources)
 
 

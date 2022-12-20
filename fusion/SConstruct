@@ -96,7 +96,7 @@ pycmd = "python"
 if os.environ.get('PYTHON'):
     pycmd = os.environ['PYTHON'] 
 
-PhonyTargets(lint = 'find . -name "*.cpp" -or -name "*.hpp" | grep -v opencv | xargs ' + pycmd + ' ../util/cpplint.py --linelength=256 2> cpplint.out')
+PhonyTargets(lint = 'find . -name "*.cpp" -or -name "*.hpp" | xargs ' + pycmd + ' util/cpplint.py --linelength=256 2> cpplint.out')
 
 # Invoke Scons in all the subdirectories
 for subdir in subdirs:
